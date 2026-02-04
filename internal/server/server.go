@@ -12,6 +12,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
 
@@ -128,8 +129,17 @@ func (s *Server) Start() error {
 	s.unixListener = unixListener
 	s.tcpListener = tcpListener
 
-	// Create gRPC server
-	s.grpcServer = grpc.NewServer()
+	// Create gRPC server with keepalive for detecting dead connections
+	s.grpcServer = grpc.NewServer(
+		grpc.KeepaliveParams(keepalive.ServerParameters{
+			Time:    20 * time.Second, // Send ping every 20s if idle
+			Timeout: 5 * time.Second,  // Wait 5s for pong
+		}),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             10 * time.Second, // Minimum time between client pings
+			PermitWithoutStream: true,             // Allow pings even when no streams
+		}),
+	)
 
 	// Create and register services
 	systemSvc := &systemService{server: s}
