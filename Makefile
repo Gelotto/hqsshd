@@ -1,4 +1,4 @@
-.PHONY: build proto install install-user clean deps run tidy test
+.PHONY: build proto install install-user clean deps run tidy test test-race test-coverage test-verbose test-short
 
 # Go parameters
 GOCMD=go
@@ -64,3 +64,19 @@ tidy:
 # Run tests
 test:
 	$(GOCMD) test ./...
+
+# Run tests with race detector
+test-race:
+	$(GOCMD) test -race ./...
+
+# Run tests with coverage
+test-coverage:
+	$(GOCMD) test -cover ./...
+
+# Run tests with verbose output
+test-verbose:
+	$(GOCMD) test -v ./...
+
+# Run short tests only (skip integration tests)
+test-short:
+	$(GOCMD) test -short ./...
