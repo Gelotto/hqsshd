@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/creack/pty"
@@ -61,31 +62,51 @@ func (s *Session) StartPTY() error {
 }
 
 // buildCommand builds the exec.Cmd for the session's tool
+// All commands are wrapped in a login+interactive shell (-l -i) to ensure the user's full
+// environment (PATH, etc.) is available. The -i flag is critical because .bashrc typically
+// has an early-exit guard for non-interactive shells (case $- in *i*) ...).
 func (s *Session) buildCommand() (*exec.Cmd, error) {
+	// Get user's login shell
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/bash"
+	}
+
 	var cmd *exec.Cmd
 
 	switch s.Tool {
-	case "claude":
-		cmd = exec.Command("claude", s.Args...)
-	case "codex":
-		cmd = exec.Command("codex", s.Args...)
-	case "aider":
-		cmd = exec.Command("aider", s.Args...)
 	case "shell":
-		// Default to user's shell or bash
-		shell := os.Getenv("SHELL")
-		if shell == "" {
-			shell = "/bin/bash"
-		}
-		// For shell, args are passed as -c "command" if provided
+		// Interactive shell session - use login shell directly
 		if len(s.Args) > 0 {
-			cmd = exec.Command(shell, append([]string{"-c"}, s.Args...)...)
+			// Run a command in the shell
+			cmd = exec.Command(shell, "-l", "-i", "-c", strings.Join(s.Args, " "))
 		} else {
-			cmd = exec.Command(shell)
+			// Interactive login shell
+			cmd = exec.Command(shell, "-l")
 		}
 	default:
-		// Try to run the tool as a command with any args
-		cmd = exec.Command(s.Tool, s.Args...)
+		// Tools (claude, codex, aider, etc.) - wrap in login shell
+		// This ensures PATH from .bashrc/.bash_profile is loaded
+		toolCmd := s.Tool
+		if len(s.Args) > 0 {
+			// Quote args that contain spaces for shell execution
+			quotedArgs := make([]string, len(s.Args))
+			for i, arg := range s.Args {
+				if strings.ContainsAny(arg, " \t\"'") {
+					quotedArgs[i] = fmt.Sprintf("%q", arg)
+				} else {
+					quotedArgs[i] = arg
+				}
+			}
+			toolCmd = s.Tool + " " + strings.Join(quotedArgs, " ")
+		}
+		cmd = exec.Command(shell, "-l", "-i", "-c", toolCmd)
+
+		logging.Debug("building command with login shell",
+			"session_id", s.ID,
+			"shell", shell,
+			"tool_cmd", toolCmd,
+		)
 	}
 
 	// Set working directory
@@ -94,7 +115,8 @@ func (s *Session) buildCommand() (*exec.Cmd, error) {
 	// Get dimensions (thread-safe)
 	cols, rows := s.GetDimensions()
 
-	// Set environment
+	// Set environment - the login shell will source user's config files
+	// and override/extend these with the user's PATH, etc.
 	cmd.Env = append(os.Environ(),
 		"TERM=xterm-256color",
 		fmt.Sprintf("COLUMNS=%d", cols),
