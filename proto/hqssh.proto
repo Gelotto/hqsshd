@@ -1,0 +1,335 @@
+syntax = "proto3";
+
+package hqssh;
+
+option go_package = "github.com/gelotto/hqsshd/proto";
+
+// Common messages
+message Empty {}
+
+// ============================================================================
+// System Service - System information and health
+// ============================================================================
+
+service SystemService {
+  // Get system information (hostname, OS, daemon version, installed tools)
+  rpc GetInfo(Empty) returns (SystemInfo);
+
+  // Get current system status (uptime, resource usage)
+  rpc GetStatus(Empty) returns (SystemStatus);
+}
+
+message SystemInfo {
+  string hostname = 1;
+  string os = 2;
+  string arch = 3;
+  string daemon_version = 4;
+  repeated string installed_tools = 5;  // ['claude', 'codex', 'aider']
+}
+
+message SystemStatus {
+  int64 uptime_seconds = 1;
+  int32 active_sessions = 2;
+  int32 active_projects = 3;
+}
+
+// ============================================================================
+// Project Service - Project discovery and management
+// ============================================================================
+
+service ProjectService {
+  // List all registered projects
+  rpc List(ListProjectsRequest) returns (ListProjectsResponse);
+
+  // Add a directory as a project
+  rpc Add(AddProjectRequest) returns (Project);
+
+  // Remove a project from registry (doesn't delete files)
+  rpc Remove(RemoveProjectRequest) returns (Empty);
+
+  // Discover git repos in specified directories
+  rpc Discover(DiscoverRequest) returns (DiscoverResponse);
+
+  // Get detected tools for a project
+  rpc GetTools(GetToolsRequest) returns (GetToolsResponse);
+}
+
+message Project {
+  string id = 1;
+  string name = 2;
+  string path = 3;
+  repeated string detected_tools = 4;
+  int64 last_accessed = 5;  // Unix timestamp
+  bool is_favorite = 6;
+}
+
+message ListProjectsRequest {
+  bool favorites_only = 1;
+}
+
+message ListProjectsResponse {
+  repeated Project projects = 1;
+}
+
+message AddProjectRequest {
+  string path = 1;
+  string name = 2;  // Optional, defaults to directory name
+}
+
+message RemoveProjectRequest {
+  string project_id = 1;
+}
+
+message DiscoverRequest {
+  repeated string directories = 1;  // Directories to scan
+  int32 max_depth = 2;              // Default: 3
+}
+
+message DiscoverResponse {
+  repeated Project discovered = 1;
+  int32 total_scanned = 2;
+}
+
+message GetToolsRequest {
+  string project_id = 1;
+}
+
+message GetToolsResponse {
+  repeated string tools = 1;
+}
+
+// ============================================================================
+// Session Service - AI tool session management
+// ============================================================================
+
+service SessionService {
+  // Create a new session (launches AI tool)
+  rpc Create(CreateSessionRequest) returns (Session);
+
+  // List all sessions
+  rpc List(ListSessionsRequest) returns (ListSessionsResponse);
+
+  // Attach to a session (streaming terminal output)
+  rpc Attach(AttachRequest) returns (stream TerminalOutput);
+
+  // Send input to a session (streaming terminal input)
+  rpc Input(stream TerminalInput) returns (Empty);
+
+  // Detach from a session (doesn't end it)
+  rpc Detach(DetachRequest) returns (Empty);
+
+  // Kill a session (ends the process)
+  rpc Kill(KillSessionRequest) returns (Empty);
+
+  // Resize the terminal
+  rpc Resize(ResizeRequest) returns (Empty);
+}
+
+message Session {
+  string id = 1;
+  string project_id = 2;
+  string tool = 3;                  // 'claude', 'codex', 'aider', 'shell'
+  string working_directory = 4;
+  SessionStatus status = 5;
+  int64 created_at = 6;             // Unix timestamp
+  int64 last_activity = 7;          // Unix timestamp
+  int32 client_count = 8;           // Number of attached clients
+}
+
+enum SessionStatus {
+  SESSION_STATUS_UNSPECIFIED = 0;
+  SESSION_STATUS_RUNNING = 1;
+  SESSION_STATUS_IDLE = 2;
+  SESSION_STATUS_ENDED = 3;
+}
+
+message CreateSessionRequest {
+  string project_id = 1;            // Optional - if set, uses project directory
+  string tool = 2;                  // 'claude', 'codex', 'aider', 'shell'
+  string working_directory = 3;     // Used if no project_id
+  repeated string args = 4;         // Additional tool arguments
+  int32 cols = 5;                   // Terminal columns
+  int32 rows = 6;                   // Terminal rows
+}
+
+message ListSessionsRequest {
+  string project_id = 1;            // Optional - filter by project
+  bool include_ended = 2;           // Include ended sessions
+}
+
+message ListSessionsResponse {
+  repeated Session sessions = 1;
+}
+
+message AttachRequest {
+  string session_id = 1;
+  int32 cols = 2;
+  int32 rows = 3;
+}
+
+message TerminalOutput {
+  bytes data = 1;
+}
+
+message TerminalInput {
+  string session_id = 1;
+  bytes data = 2;
+}
+
+message DetachRequest {
+  string session_id = 1;
+}
+
+message KillSessionRequest {
+  string session_id = 1;
+}
+
+message ResizeRequest {
+  string session_id = 1;
+  int32 cols = 2;
+  int32 rows = 3;
+}
+
+// ============================================================================
+// Task Service - Task automation
+// ============================================================================
+
+service TaskService {
+  // List task definitions
+  rpc List(ListTasksRequest) returns (ListTasksResponse);
+
+  // Create a new task definition
+  rpc Create(CreateTaskRequest) returns (Task);
+
+  // Update an existing task
+  rpc Update(UpdateTaskRequest) returns (Task);
+
+  // Delete a task definition
+  rpc Delete(DeleteTaskRequest) returns (Empty);
+
+  // Run a task
+  rpc Run(RunTaskRequest) returns (TaskRun);
+
+  // Get a specific task run
+  rpc GetRun(GetRunRequest) returns (TaskRun);
+
+  // List task runs
+  rpc ListRuns(ListRunsRequest) returns (ListRunsResponse);
+
+  // Cancel a running task
+  rpc CancelRun(CancelRunRequest) returns (Empty);
+
+  // Export task definition to YAML
+  rpc Export(ExportTaskRequest) returns (ExportTaskResponse);
+
+  // Import task definition from YAML
+  rpc Import(ImportTaskRequest) returns (Task);
+}
+
+message Task {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  string tool = 4;                  // 'claude', 'codex', 'aider'
+  TaskScope scope = 5;
+  string project_id = 6;            // Required if scope == PROJECT
+  string prompt = 7;
+  bool interactive = 8;
+  int32 timeout_seconds = 9;        // 0 for no timeout
+}
+
+enum TaskScope {
+  TASK_SCOPE_UNSPECIFIED = 0;
+  TASK_SCOPE_GLOBAL = 1;            // Runs on any system
+  TASK_SCOPE_SYSTEM = 2;            // Runs on this system, no project context
+  TASK_SCOPE_PROJECT = 3;           // Runs in project directory
+}
+
+message TaskRun {
+  string id = 1;
+  string task_id = 2;
+  TaskRunStatus status = 3;
+  int64 started_at = 4;
+  int64 completed_at = 5;
+  string output = 6;
+  string error = 7;
+  string session_id = 8;            // For interactive tasks - can attach
+}
+
+enum TaskRunStatus {
+  TASK_RUN_STATUS_UNSPECIFIED = 0;
+  TASK_RUN_STATUS_PENDING = 1;
+  TASK_RUN_STATUS_RUNNING = 2;
+  TASK_RUN_STATUS_COMPLETED = 3;
+  TASK_RUN_STATUS_FAILED = 4;
+  TASK_RUN_STATUS_CANCELLED = 5;
+}
+
+message ListTasksRequest {
+  TaskScope scope = 1;              // Optional - filter by scope
+  string project_id = 2;            // Optional - filter by project
+}
+
+message ListTasksResponse {
+  repeated Task tasks = 1;
+}
+
+message CreateTaskRequest {
+  string name = 1;
+  string description = 2;
+  string tool = 3;
+  TaskScope scope = 4;
+  string project_id = 5;
+  string prompt = 6;
+  bool interactive = 7;
+  int32 timeout_seconds = 8;
+}
+
+message UpdateTaskRequest {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  string tool = 4;
+  TaskScope scope = 5;
+  string project_id = 6;
+  string prompt = 7;
+  bool interactive = 8;
+  int32 timeout_seconds = 9;
+}
+
+message DeleteTaskRequest {
+  string task_id = 1;
+}
+
+message RunTaskRequest {
+  string task_id = 1;
+}
+
+message GetRunRequest {
+  string run_id = 1;
+}
+
+message ListRunsRequest {
+  string task_id = 1;               // Optional - filter by task
+  int32 limit = 2;                  // Default: 50
+}
+
+message ListRunsResponse {
+  repeated TaskRun runs = 1;
+}
+
+message CancelRunRequest {
+  string run_id = 1;
+}
+
+message ExportTaskRequest {
+  string task_id = 1;
+}
+
+message ExportTaskResponse {
+  string yaml = 1;
+}
+
+message ImportTaskRequest {
+  string yaml = 1;
+}

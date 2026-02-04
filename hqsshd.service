@@ -1,0 +1,26 @@
+[Unit]
+Description=HQSSH Daemon - AI CLI Session Manager
+Documentation=https://github.com/gelotto/hqsshd
+After=network.target
+
+[Service]
+Type=simple
+# Default: user install location
+ExecStart=%h/.local/bin/hqsshd
+# Alternative: system-wide install
+# ExecStart=/usr/local/bin/hqsshd
+Restart=on-failure
+RestartSec=5
+Environment=HOME=%h
+
+# Logging goes to journald
+# View with: journalctl --user -u hqsshd -f
+StandardOutput=journal
+StandardError=journal
+
+# Security hardening (optional)
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

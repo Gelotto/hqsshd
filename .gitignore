@@ -1,0 +1,26 @@
+# Binaries (root level only, not cmd/ directories)
+bin/
+/hqsshd
+/hqssh
+*.exe
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Go
+# (go.sum should be committed for reproducible builds)
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data directory (created at runtime)
+.hqssh/
+
+# Debug files
+*.log
+*.prof
