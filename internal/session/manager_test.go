@@ -8,7 +8,7 @@ import (
 )
 
 func TestNewManager(t *testing.T) {
-	m := NewManager(3600, 20, 10000)
+	m := NewManager(3600, 20, 10000, t.TempDir(), "", 0)
 	defer m.Close()
 
 	if m == nil {
@@ -27,17 +27,18 @@ func TestNewManager(t *testing.T) {
 }
 
 func TestNewManager_DefaultBufferSize(t *testing.T) {
-	m := NewManager(3600, 20, 0)
+	m := NewManager(3600, 20, 0, t.TempDir(), "", 0)
 	defer m.Close()
 
-	// Should default to 1MB
-	if m.maxBufferSize != 1024*1024 {
-		t.Errorf("maxBufferSize = %d, want %d", m.maxBufferSize, 1024*1024)
+	// Should default to 10MB when historySize is 0
+	expectedSize := 10 * 1024 * 1024
+	if m.maxBufferSize != expectedSize {
+		t.Errorf("maxBufferSize = %d, want %d", m.maxBufferSize, expectedSize)
 	}
 }
 
 func TestManager_GetUnknownSession(t *testing.T) {
-	m := NewManager(3600, 20, 10000)
+	m := NewManager(3600, 20, 10000, t.TempDir(), "", 0)
 	defer m.Close()
 
 	sess := m.Get("unknown-session-id")
@@ -47,7 +48,7 @@ func TestManager_GetUnknownSession(t *testing.T) {
 }
 
 func TestManager_ListEmpty(t *testing.T) {
-	m := NewManager(3600, 20, 10000)
+	m := NewManager(3600, 20, 10000, t.TempDir(), "", 0)
 	defer m.Close()
 
 	sessions := m.List("", false)
@@ -57,7 +58,7 @@ func TestManager_ListEmpty(t *testing.T) {
 }
 
 func TestManager_AttachUnknownSession(t *testing.T) {
-	m := NewManager(3600, 20, 10000)
+	m := NewManager(3600, 20, 10000, t.TempDir(), "", 0)
 	defer m.Close()
 
 	_, _, _, err := m.Attach("unknown-session-id", 80, 24)
@@ -70,7 +71,7 @@ func TestManager_AttachUnknownSession(t *testing.T) {
 }
 
 func TestManager_DetachUnknownSession(t *testing.T) {
-	m := NewManager(3600, 20, 10000)
+	m := NewManager(3600, 20, 10000, t.TempDir(), "", 0)
 	defer m.Close()
 
 	err := m.Detach("unknown-session-id", "client-1")
@@ -83,7 +84,7 @@ func TestManager_DetachUnknownSession(t *testing.T) {
 }
 
 func TestManager_InputUnknownSession(t *testing.T) {
-	m := NewManager(3600, 20, 10000)
+	m := NewManager(3600, 20, 10000, t.TempDir(), "", 0)
 	defer m.Close()
 
 	err := m.Input("unknown-session-id", []byte("test"))
@@ -96,7 +97,7 @@ func TestManager_InputUnknownSession(t *testing.T) {
 }
 
 func TestManager_ResizeUnknownSession(t *testing.T) {
-	m := NewManager(3600, 20, 10000)
+	m := NewManager(3600, 20, 10000, t.TempDir(), "", 0)
 	defer m.Close()
 
 	err := m.Resize("unknown-session-id", 80, 24)
@@ -109,7 +110,7 @@ func TestManager_ResizeUnknownSession(t *testing.T) {
 }
 
 func TestManager_KillUnknownSession(t *testing.T) {
-	m := NewManager(3600, 20, 10000)
+	m := NewManager(3600, 20, 10000, t.TempDir(), "", 0)
 	defer m.Close()
 
 	err := m.Kill("unknown-session-id")
@@ -122,7 +123,7 @@ func TestManager_KillUnknownSession(t *testing.T) {
 }
 
 func TestManager_CountEmpty(t *testing.T) {
-	m := NewManager(3600, 20, 10000)
+	m := NewManager(3600, 20, 10000, t.TempDir(), "", 0)
 	defer m.Close()
 
 	count := m.Count()
@@ -132,7 +133,7 @@ func TestManager_CountEmpty(t *testing.T) {
 }
 
 func TestManager_CloseIdempotent(t *testing.T) {
-	m := NewManager(3600, 20, 10000)
+	m := NewManager(3600, 20, 10000, t.TempDir(), "", 0)
 
 	// First close should succeed
 	err1 := m.Close()
@@ -148,7 +149,7 @@ func TestManager_CloseIdempotent(t *testing.T) {
 }
 
 func TestManager_CloseConcurrent(t *testing.T) {
-	m := NewManager(3600, 20, 10000)
+	m := NewManager(3600, 20, 10000, t.TempDir(), "", 0)
 
 	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {
@@ -165,7 +166,7 @@ func TestManager_CloseConcurrent(t *testing.T) {
 // TestManager_MaxSessionsLimit tests that the manager rejects new sessions
 // when the max limit is reached. This test uses mock sessions to avoid PTY.
 func TestManager_MaxSessionsLimit(t *testing.T) {
-	m := NewManager(3600, 2, 10000)
+	m := NewManager(3600, 2, 10000, t.TempDir(), "", 0)
 	defer m.Close()
 
 	// Manually add mock sessions to test limit
@@ -185,7 +186,7 @@ func TestManager_MaxSessionsLimit(t *testing.T) {
 }
 
 func TestManager_ListByProject(t *testing.T) {
-	m := NewManager(3600, 20, 10000)
+	m := NewManager(3600, 20, 10000, t.TempDir(), "", 0)
 	defer m.Close()
 
 	// Add mock sessions
@@ -218,7 +219,7 @@ func TestManager_ListByProject(t *testing.T) {
 }
 
 func TestManager_ListExcludesEnded(t *testing.T) {
-	m := NewManager(3600, 20, 10000)
+	m := NewManager(3600, 20, 10000, t.TempDir(), "", 0)
 	defer m.Close()
 
 	// Add mock sessions
@@ -245,7 +246,7 @@ func TestManager_ListExcludesEnded(t *testing.T) {
 }
 
 func TestManager_CountExcludesEnded(t *testing.T) {
-	m := NewManager(3600, 20, 10000)
+	m := NewManager(3600, 20, 10000, t.TempDir(), "", 0)
 	defer m.Close()
 
 	// Add mock sessions

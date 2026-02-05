@@ -23,11 +23,19 @@ type Manager struct {
 	done          chan struct{}
 	wg            sync.WaitGroup // Wait for cleanupLoop to exit
 	closed        atomic.Bool    // Prevent double-close panic
+
+	// Persistence
+	store        *Store // Session metadata persistence
+	logDir       string // Directory for session logs
+	retentionDays int   // Days to keep ended session logs (0 = forever)
 }
 
 // NewManager creates a new session manager
 // historySize is in lines - we estimate ~100 bytes per line for buffer sizing
-func NewManager(idleTimeoutSec, maxSessions, historySize int) *Manager {
+// dataDir is the base data directory (e.g., ~/.hqssh)
+// logDir is the directory for session logs (empty string uses default: dataDir/logs/sessions)
+// retentionDays is how long to keep ended session logs (0 = forever)
+func NewManager(idleTimeoutSec, maxSessions, historySize int, dataDir, logDir string, retentionDays int) *Manager {
 	// Convert lines to bytes (estimate ~100 bytes per line)
 	maxBufferSize := historySize * 100
 	if maxBufferSize <= 0 {
@@ -36,12 +44,40 @@ func NewManager(idleTimeoutSec, maxSessions, historySize int) *Manager {
 		maxBufferSize = 10 * 1024 * 1024
 	}
 
+	// Default log directory
+	if logDir == "" {
+		logDir = dataDir + "/logs/sessions"
+	}
+
+	// Create session store
+	store := NewStore(dataDir, logDir)
+	if err := store.Load(); err != nil {
+		logging.Warn("failed to load session store", "error", err)
+	}
+
 	m := &Manager{
 		sessions:      make(map[string]*Session),
 		idleTimeout:   time.Duration(idleTimeoutSec) * time.Second,
 		maxSessions:   maxSessions,
 		maxBufferSize: maxBufferSize,
 		done:          make(chan struct{}),
+		store:         store,
+		logDir:        logDir,
+		retentionDays: retentionDays,
+	}
+
+	// Mark any previously "running" or "idle" sessions as ended (daemon restart)
+	for _, record := range store.List("", true) {
+		if record.Status == "running" || record.Status == "idle" {
+			if !store.MarkEnded(record.ID) {
+				logging.Warn("failed to mark stale session as ended",
+					"session_id", record.ID,
+				)
+			}
+		}
+	}
+	if err := store.Save(); err != nil {
+		logging.Warn("failed to save session store after marking stale sessions", "error", err)
 	}
 
 	// Start cleanup routine
@@ -68,7 +104,6 @@ func (m *Manager) cleanupLoop() {
 // cleanup removes ended sessions and checks for idle timeouts
 func (m *Manager) cleanup() {
 	m.sessionsMu.Lock()
-	defer m.sessionsMu.Unlock()
 
 	now := time.Now()
 	toDelete := []string{}
@@ -81,6 +116,14 @@ func (m *Manager) cleanup() {
 		if status == StatusEnded {
 			toDelete = append(toDelete, id)
 			endedCount++
+			// Close session to flush logger and compress log file
+			sess.Close()
+			// Mark as ended in store
+			if !m.store.MarkEnded(id) {
+				logging.Warn("failed to mark ended session in store",
+					"session_id", id,
+				)
+			}
 			continue
 		}
 
@@ -97,6 +140,12 @@ func (m *Manager) cleanup() {
 				sess.Close()
 				toDelete = append(toDelete, id)
 				idleTimeoutCount++
+				// Mark as ended in store
+				if !m.store.MarkEnded(id) {
+					logging.Warn("failed to mark idle-timeout session in store",
+						"session_id", id,
+					)
+				}
 			}
 		}
 	}
@@ -105,6 +154,8 @@ func (m *Manager) cleanup() {
 		delete(m.sessions, id)
 	}
 
+	m.sessionsMu.Unlock()
+
 	// Log cleanup summary if any sessions were removed
 	if len(toDelete) > 0 {
 		logging.Debug("cleanup completed",
@@ -112,6 +163,24 @@ func (m *Manager) cleanup() {
 			"removed_idle_timeout", idleTimeoutCount,
 			"remaining_sessions", len(m.sessions),
 		)
+
+		// Save store after marking sessions as ended
+		if err := m.store.Save(); err != nil {
+			logging.Warn("failed to save session store after cleanup", "error", err)
+		}
+	}
+
+	// Run log retention cleanup
+	if m.retentionDays > 0 {
+		removed, err := m.store.Cleanup(m.retentionDays)
+		if err != nil {
+			logging.Warn("session log retention cleanup failed", "error", err)
+		} else if removed > 0 {
+			logging.Info("session log retention cleanup completed",
+				"removed", removed,
+				"retention_days", m.retentionDays,
+			)
+		}
 	}
 }
 
@@ -132,19 +201,46 @@ func (m *Manager) Create(projectID, tool, workingDir string, args []string, cols
 	// Create session with config-based buffer size
 	sess := NewSession(projectID, tool, workingDir, args, cols, rows, m.maxBufferSize)
 
+	// Create session logger for persistent output
+	logger, err := NewSessionLogger(sess.ID, m.logDir)
+	if err != nil {
+		logging.Warn("failed to create session logger",
+			"session_id", sess.ID,
+			"error", err,
+		)
+		// Continue without logger - session will still work, just no persistence
+	} else {
+		sess.SetLogger(logger)
+	}
+
 	// Start PTY
 	if err := sess.StartPTY(); err != nil {
+		// Clean up logger if PTY fails
+		if logger != nil {
+			logger.Close()
+		}
 		return nil, fmt.Errorf("failed to start PTY: %w", err)
 	}
 
-	// Store session
+	// Store session in memory
 	m.sessions[sess.ID] = sess
+
+	// Add to persistent store
+	record := CreateRecord(sess, m.logDir)
+	m.store.Add(record)
+	if err := m.store.Save(); err != nil {
+		logging.Warn("failed to save session store",
+			"session_id", sess.ID,
+			"error", err,
+		)
+	}
 
 	logging.Info("session registered",
 		"session_id", sess.ID,
 		"tool", tool,
 		"project_id", projectID,
 		"total_sessions", len(m.sessions),
+		"log_path", record.LogPath,
 	)
 
 	return sess, nil
@@ -311,7 +407,23 @@ func (m *Manager) Kill(sessionID string) error {
 		"remaining_sessions", remaining,
 	)
 
-	return sess.Close()
+	// Close the session
+	err := sess.Close()
+
+	// Mark as ended in store
+	if !m.store.MarkEnded(sessionID) {
+		logging.Warn("failed to mark killed session in store",
+			"session_id", sessionID,
+		)
+	}
+	if saveErr := m.store.Save(); saveErr != nil {
+		logging.Warn("failed to save session store after kill",
+			"session_id", sessionID,
+			"error", saveErr,
+		)
+	}
+
+	return err
 }
 
 // Count returns the number of active (non-ended) sessions
@@ -326,6 +438,16 @@ func (m *Manager) Count() int {
 		}
 	}
 	return count
+}
+
+// GetStore returns the session store for persistence operations
+func (m *Manager) GetStore() *Store {
+	return m.store
+}
+
+// GetLogDir returns the log directory path
+func (m *Manager) GetLogDir() string {
+	return m.logDir
 }
 
 // Close shuts down the manager and all sessions.
@@ -346,11 +468,28 @@ func (m *Manager) Close() error {
 
 	// Close all sessions
 	m.sessionsMu.Lock()
-	defer m.sessionsMu.Unlock()
 
 	sessionCount := len(m.sessions)
-	for _, sess := range m.sessions {
+	sessionIDs := make([]string, 0, sessionCount)
+	for id, sess := range m.sessions {
 		sess.Close()
+		sessionIDs = append(sessionIDs, id)
+	}
+
+	m.sessionsMu.Unlock()
+
+	// Mark all sessions as ended in store
+	for _, id := range sessionIDs {
+		if !m.store.MarkEnded(id) {
+			logging.Warn("failed to mark session as ended on shutdown",
+				"session_id", id,
+			)
+		}
+	}
+
+	// Save store before shutdown
+	if err := m.store.Save(); err != nil {
+		logging.Warn("failed to save session store on shutdown", "error", err)
 	}
 
 	logging.Info("session manager closed", "sessions_closed", sessionCount)

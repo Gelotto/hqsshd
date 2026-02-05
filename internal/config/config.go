@@ -38,9 +38,11 @@ type Config struct {
 }
 
 type SessionConfig struct {
-	IdleTimeout int `yaml:"idle_timeout"` // Seconds before session considered idle (default: 86400 = 24h)
-	MaxSessions int `yaml:"max_sessions"` // Maximum concurrent sessions (default: 20)
-	HistorySize int `yaml:"history_size"` // Lines of scrollback (default: 10000)
+	IdleTimeout      int    `yaml:"idle_timeout"`       // Seconds before session considered idle (default: 86400 = 24h)
+	MaxSessions      int    `yaml:"max_sessions"`       // Maximum concurrent sessions (default: 20)
+	HistorySize      int    `yaml:"history_size"`       // Lines of scrollback (default: 10000)
+	LogRetentionDays int    `yaml:"log_retention_days"` // Days to keep ended session logs (default: 30, 0 = forever)
+	LogDirectory     string `yaml:"log_directory"`      // Directory for session logs (default: ~/.hqssh/logs/sessions)
 }
 
 type ProjectConfig struct {
@@ -68,9 +70,11 @@ func DefaultConfig() *Config {
 		Socket:  DefaultSocketPath,
 		TCPPort: DefaultTCPPort,
 		Sessions: SessionConfig{
-			IdleTimeout: 86400, // 24 hours
-			MaxSessions: 20,
-			HistorySize: 10000,
+			IdleTimeout:      86400, // 24 hours
+			MaxSessions:      20,
+			HistorySize:      10000,
+			LogRetentionDays: 30,    // 30 days
+			LogDirectory:     "",    // Empty = default (~/.hqssh/logs/sessions)
 		},
 		Projects: ProjectConfig{
 			ScanDirectories: []string{

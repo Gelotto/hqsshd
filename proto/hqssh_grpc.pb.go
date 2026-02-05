@@ -427,14 +427,16 @@ var ProjectService_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	SessionService_Create_FullMethodName        = "/hqssh.SessionService/Create"
-	SessionService_List_FullMethodName          = "/hqssh.SessionService/List"
-	SessionService_Attach_FullMethodName        = "/hqssh.SessionService/Attach"
-	SessionService_Input_FullMethodName         = "/hqssh.SessionService/Input"
-	SessionService_Detach_FullMethodName        = "/hqssh.SessionService/Detach"
-	SessionService_Kill_FullMethodName          = "/hqssh.SessionService/Kill"
-	SessionService_Resize_FullMethodName        = "/hqssh.SessionService/Resize"
-	SessionService_GetScrollback_FullMethodName = "/hqssh.SessionService/GetScrollback"
+	SessionService_Create_FullMethodName                 = "/hqssh.SessionService/Create"
+	SessionService_List_FullMethodName                   = "/hqssh.SessionService/List"
+	SessionService_Attach_FullMethodName                 = "/hqssh.SessionService/Attach"
+	SessionService_Input_FullMethodName                  = "/hqssh.SessionService/Input"
+	SessionService_Detach_FullMethodName                 = "/hqssh.SessionService/Detach"
+	SessionService_Kill_FullMethodName                   = "/hqssh.SessionService/Kill"
+	SessionService_Resize_FullMethodName                 = "/hqssh.SessionService/Resize"
+	SessionService_GetScrollback_FullMethodName          = "/hqssh.SessionService/GetScrollback"
+	SessionService_GetSessionLog_FullMethodName          = "/hqssh.SessionService/GetSessionLog"
+	SessionService_ListHistoricalSessions_FullMethodName = "/hqssh.SessionService/ListHistoricalSessions"
 )
 
 // SessionServiceClient is the client API for SessionService service.
@@ -457,6 +459,10 @@ type SessionServiceClient interface {
 	Resize(ctx context.Context, in *ResizeRequest, opts ...grpc.CallOption) (*Empty, error)
 	// Get scrollback buffer (view output without attaching)
 	GetScrollback(ctx context.Context, in *GetScrollbackRequest, opts ...grpc.CallOption) (*GetScrollbackResponse, error)
+	// Get full session log (for active or ended sessions)
+	GetSessionLog(ctx context.Context, in *GetSessionLogRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[TerminalOutput], error)
+	// List historical sessions (ended sessions with logs available)
+	ListHistoricalSessions(ctx context.Context, in *ListHistoricalSessionsRequest, opts ...grpc.CallOption) (*ListHistoricalSessionsResponse, error)
 }
 
 type sessionServiceClient struct {
@@ -559,6 +565,35 @@ func (c *sessionServiceClient) GetScrollback(ctx context.Context, in *GetScrollb
 	return out, nil
 }
 
+func (c *sessionServiceClient) GetSessionLog(ctx context.Context, in *GetSessionLogRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[TerminalOutput], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &SessionService_ServiceDesc.Streams[2], SessionService_GetSessionLog_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[GetSessionLogRequest, TerminalOutput]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type SessionService_GetSessionLogClient = grpc.ServerStreamingClient[TerminalOutput]
+
+func (c *sessionServiceClient) ListHistoricalSessions(ctx context.Context, in *ListHistoricalSessionsRequest, opts ...grpc.CallOption) (*ListHistoricalSessionsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListHistoricalSessionsResponse)
+	err := c.cc.Invoke(ctx, SessionService_ListHistoricalSessions_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SessionServiceServer is the server API for SessionService service.
 // All implementations must embed UnimplementedSessionServiceServer
 // for forward compatibility.
@@ -579,6 +614,10 @@ type SessionServiceServer interface {
 	Resize(context.Context, *ResizeRequest) (*Empty, error)
 	// Get scrollback buffer (view output without attaching)
 	GetScrollback(context.Context, *GetScrollbackRequest) (*GetScrollbackResponse, error)
+	// Get full session log (for active or ended sessions)
+	GetSessionLog(*GetSessionLogRequest, grpc.ServerStreamingServer[TerminalOutput]) error
+	// List historical sessions (ended sessions with logs available)
+	ListHistoricalSessions(context.Context, *ListHistoricalSessionsRequest) (*ListHistoricalSessionsResponse, error)
 	mustEmbedUnimplementedSessionServiceServer()
 }
 
@@ -612,6 +651,12 @@ func (UnimplementedSessionServiceServer) Resize(context.Context, *ResizeRequest)
 }
 func (UnimplementedSessionServiceServer) GetScrollback(context.Context, *GetScrollbackRequest) (*GetScrollbackResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetScrollback not implemented")
+}
+func (UnimplementedSessionServiceServer) GetSessionLog(*GetSessionLogRequest, grpc.ServerStreamingServer[TerminalOutput]) error {
+	return status.Error(codes.Unimplemented, "method GetSessionLog not implemented")
+}
+func (UnimplementedSessionServiceServer) ListHistoricalSessions(context.Context, *ListHistoricalSessionsRequest) (*ListHistoricalSessionsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListHistoricalSessions not implemented")
 }
 func (UnimplementedSessionServiceServer) mustEmbedUnimplementedSessionServiceServer() {}
 func (UnimplementedSessionServiceServer) testEmbeddedByValue()                        {}
@@ -760,6 +805,35 @@ func _SessionService_GetScrollback_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SessionService_GetSessionLog_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(GetSessionLogRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(SessionServiceServer).GetSessionLog(m, &grpc.GenericServerStream[GetSessionLogRequest, TerminalOutput]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type SessionService_GetSessionLogServer = grpc.ServerStreamingServer[TerminalOutput]
+
+func _SessionService_ListHistoricalSessions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListHistoricalSessionsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SessionServiceServer).ListHistoricalSessions(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SessionService_ListHistoricalSessions_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SessionServiceServer).ListHistoricalSessions(ctx, req.(*ListHistoricalSessionsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SessionService_ServiceDesc is the grpc.ServiceDesc for SessionService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -791,6 +865,10 @@ var SessionService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "GetScrollback",
 			Handler:    _SessionService_GetScrollback_Handler,
 		},
+		{
+			MethodName: "ListHistoricalSessions",
+			Handler:    _SessionService_ListHistoricalSessions_Handler,
+		},
 	},
 	Streams: []grpc.StreamDesc{
 		{
@@ -802,6 +880,11 @@ var SessionService_ServiceDesc = grpc.ServiceDesc{
 			StreamName:    "Input",
 			Handler:       _SessionService_Input_Handler,
 			ClientStreams: true,
+		},
+		{
+			StreamName:    "GetSessionLog",
+			Handler:       _SessionService_GetSessionLog_Handler,
+			ServerStreams: true,
 		},
 	},
 	Metadata: "proto/hqssh.proto",

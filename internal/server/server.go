@@ -64,6 +64,9 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		cfg.Sessions.IdleTimeout,
 		cfg.Sessions.MaxSessions,
 		cfg.Sessions.HistorySize,
+		dataDir,
+		cfg.Sessions.LogDirectory,
+		cfg.Sessions.LogRetentionDays,
 	)
 
 	// Create task store and run store
@@ -579,6 +582,115 @@ func (s *sessionService) GetScrollback(ctx context.Context, req *pb.GetScrollbac
 	}, nil
 }
 
+func (s *sessionService) GetSessionLog(req *pb.GetSessionLogRequest, stream pb.SessionService_GetSessionLogServer) error {
+	sessionID := req.GetSessionId()
+	if sessionID == "" {
+		return status.Error(codes.InvalidArgument, "session_id is required")
+	}
+
+	logDir := s.server.sessionManager.GetLogDir()
+
+	// Try to read the log file
+	reader, err := session.ReadLog(logDir, sessionID)
+	if err != nil {
+		// If no log file, try to get scrollback from active session
+		data, scrollErr := s.server.sessionManager.GetScrollback(sessionID)
+		if scrollErr != nil {
+			return status.Errorf(codes.NotFound, "session log not found: %v", err)
+		}
+		// Send scrollback as a single chunk
+		if len(data) > 0 {
+			if err := stream.Send(&pb.TerminalOutput{Data: data}); err != nil {
+				return status.Errorf(codes.Internal, "failed to send data: %v", err)
+			}
+		}
+		return nil
+	}
+	defer reader.Close()
+
+	// Handle offset if specified
+	// Note: Offset only works for uncompressed logs (active sessions).
+	// Compressed (.gz) logs don't support seeking, so offset is ignored.
+	if req.GetOffset() > 0 {
+		if seeker, ok := reader.(io.Seeker); ok {
+			if _, err := seeker.Seek(req.GetOffset(), io.SeekStart); err != nil {
+				return status.Errorf(codes.Internal, "failed to seek: %v", err)
+			}
+		}
+		// If reader doesn't support seeking (gzip), we continue from the beginning
+	}
+
+	// Stream log in chunks
+	buf := make([]byte, 64*1024) // 64KB chunks
+	for {
+		n, err := reader.Read(buf)
+		if n > 0 {
+			if sendErr := stream.Send(&pb.TerminalOutput{Data: buf[:n]}); sendErr != nil {
+				return status.Errorf(codes.Internal, "failed to send data: %v", sendErr)
+			}
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return status.Errorf(codes.Internal, "failed to read log: %v", err)
+		}
+	}
+
+	return nil
+}
+
+func (s *sessionService) ListHistoricalSessions(ctx context.Context, req *pb.ListHistoricalSessionsRequest) (*pb.ListHistoricalSessionsResponse, error) {
+	limit := int(req.GetLimit())
+	if limit <= 0 {
+		limit = 50
+	}
+
+	store := s.server.sessionManager.GetStore()
+	logDir := s.server.sessionManager.GetLogDir()
+
+	// Get ended sessions from store
+	records := store.ListEnded(limit)
+
+	// Filter by project if specified
+	projectID := req.GetProjectId()
+	if projectID != "" {
+		filtered := make([]*session.SessionRecord, 0)
+		for _, r := range records {
+			if r.ProjectID == projectID {
+				filtered = append(filtered, r)
+			}
+		}
+		records = filtered
+	}
+
+	// Convert to proto
+	pbSessions := make([]*pb.Session, len(records))
+	for i, r := range records {
+		// Get log size
+		var logSize int64
+		if size, err := session.GetLogSize(logDir, r.ID); err == nil {
+			logSize = size
+		}
+
+		pbSessions[i] = &pb.Session{
+			Id:               r.ID,
+			ProjectId:        r.ProjectID,
+			Tool:             r.Tool,
+			WorkingDirectory: r.WorkingDirectory,
+			Status:           pb.SessionStatus_SESSION_STATUS_ENDED,
+			CreatedAt:        r.Created.Unix(),
+			EndedAt:          r.Ended.Unix(),
+			LogPath:          r.LogPath,
+			LogSizeBytes:     logSize,
+		}
+	}
+
+	return &pb.ListHistoricalSessionsResponse{
+		Sessions: pbSessions,
+	}, nil
+}
+
 // lastNLines returns the last n lines from a byte slice
 func lastNLines(data []byte, n int) []byte {
 	if len(data) == 0 || n <= 0 {
@@ -883,6 +995,14 @@ func sessionToProto(s *session.Session) *pb.Session {
 		pbStatus = pb.SessionStatus_SESSION_STATUS_UNSPECIFIED
 	}
 
+	// Get log info from logger if available
+	var logPath string
+	var logSize int64
+	if logger := s.GetLogger(); logger != nil {
+		logPath = logger.LogPath()
+		logSize = logger.BytesWritten()
+	}
+
 	return &pb.Session{
 		Id:               s.ID,
 		ProjectId:        s.ProjectID,
@@ -892,6 +1012,8 @@ func sessionToProto(s *session.Session) *pb.Session {
 		CreatedAt:        s.CreatedAt.Unix(),
 		LastActivity:     s.LastActivity().Unix(),
 		ClientCount:      int32(s.ClientCount()),
+		LogPath:          logPath,
+		LogSizeBytes:     logSize,
 	}
 }
 

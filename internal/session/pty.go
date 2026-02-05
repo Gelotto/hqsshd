@@ -163,8 +163,18 @@ func (s *Session) readPTYOutput() {
 			// Update activity
 			s.UpdateActivity()
 
-			// Add to scrollback buffer
+			// Add to scrollback buffer (in-memory, for fast attach)
 			s.appendToBuffer(data)
+
+			// Persist to disk (if logger is set)
+			if s.logger != nil {
+				if _, err := s.logger.Write(data); err != nil {
+					logging.Warn("failed to write to session log",
+						"session_id", s.ID,
+						"error", err,
+					)
+				}
+			}
 
 			// Broadcast to all clients
 			s.broadcast(data)
@@ -285,6 +295,16 @@ func (s *Session) Close() error {
 			delete(s.clients, id)
 		}
 		s.clientsMu.Unlock()
+
+		// Close the logger (triggers compression)
+		if s.logger != nil {
+			if err := s.logger.Close(); err != nil {
+				logging.Warn("failed to close session logger",
+					"session_id", s.ID,
+					"error", err,
+				)
+			}
+		}
 
 		logging.Info("session closed",
 			"session_id", s.ID,

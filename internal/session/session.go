@@ -65,6 +65,9 @@ type Session struct {
 	outputBufferMu sync.Mutex
 	maxBufferSize  int
 
+	// Persistent logging (writes to disk for history preservation)
+	logger *SessionLogger
+
 	// Lifecycle management
 	done      chan struct{}
 	doneOnce  sync.Once
@@ -156,6 +159,16 @@ func (s *Session) IsDone() bool {
 // Done returns a channel that closes when the session ends
 func (s *Session) Done() <-chan struct{} {
 	return s.done
+}
+
+// SetLogger sets the session logger for persistent output storage
+func (s *Session) SetLogger(logger *SessionLogger) {
+	s.logger = logger
+}
+
+// GetLogger returns the session logger (may be nil)
+func (s *Session) GetLogger() *SessionLogger {
+	return s.logger
 }
 
 // markDone marks the session as ended (called internally)

@@ -126,6 +126,12 @@ service SessionService {
 
   // Get scrollback buffer (view output without attaching)
   rpc GetScrollback(GetScrollbackRequest) returns (GetScrollbackResponse);
+
+  // Get full session log (for active or ended sessions)
+  rpc GetSessionLog(GetSessionLogRequest) returns (stream TerminalOutput);
+
+  // List historical sessions (ended sessions with logs available)
+  rpc ListHistoricalSessions(ListHistoricalSessionsRequest) returns (ListHistoricalSessionsResponse);
 }
 
 message Session {
@@ -137,6 +143,9 @@ message Session {
   int64 created_at = 6;             // Unix timestamp
   int64 last_activity = 7;          // Unix timestamp
   int32 client_count = 8;           // Number of attached clients
+  int64 ended_at = 9;               // Unix timestamp (0 if still active)
+  string log_path = 10;             // Path to session log file
+  int64 log_size_bytes = 11;        // Size of log file in bytes
 }
 
 enum SessionStatus {
@@ -200,6 +209,20 @@ message GetScrollbackRequest {
 
 message GetScrollbackResponse {
   bytes data = 1;               // Raw terminal output
+}
+
+message GetSessionLogRequest {
+  string session_id = 1;
+  int64 offset = 2;             // Optional: start from byte offset
+}
+
+message ListHistoricalSessionsRequest {
+  int32 limit = 1;              // Max records to return (default: 50)
+  string project_id = 2;        // Optional: filter by project
+}
+
+message ListHistoricalSessionsResponse {
+  repeated Session sessions = 1; // Ended sessions with log info
 }
 
 // ============================================================================
