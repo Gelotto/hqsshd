@@ -558,6 +558,50 @@ func (s *sessionService) Resize(ctx context.Context, req *pb.ResizeRequest) (*pb
 	return &pb.Empty{}, nil
 }
 
+func (s *sessionService) GetScrollback(ctx context.Context, req *pb.GetScrollbackRequest) (*pb.GetScrollbackResponse, error) {
+	sessionID := req.GetSessionId()
+	if sessionID == "" {
+		return nil, status.Error(codes.InvalidArgument, "session_id is required")
+	}
+
+	data, err := s.server.sessionManager.GetScrollback(sessionID)
+	if err != nil {
+		return nil, status.Errorf(codes.NotFound, "failed to get scrollback: %v", err)
+	}
+
+	// If lines limit is specified, truncate to last N lines
+	if req.GetLines() > 0 {
+		data = lastNLines(data, int(req.GetLines()))
+	}
+
+	return &pb.GetScrollbackResponse{
+		Data: data,
+	}, nil
+}
+
+// lastNLines returns the last n lines from a byte slice
+func lastNLines(data []byte, n int) []byte {
+	if len(data) == 0 || n <= 0 {
+		return data
+	}
+
+	// Find newlines from the end
+	lineCount := 0
+	endIdx := len(data)
+
+	for i := len(data) - 1; i >= 0; i-- {
+		if data[i] == '\n' {
+			lineCount++
+			if lineCount > n {
+				return data[i+1 : endIdx]
+			}
+		}
+	}
+
+	// Return all data if fewer than n lines
+	return data
+}
+
 // ============================================================================
 // TaskService Implementation
 // ============================================================================

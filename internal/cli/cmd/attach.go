@@ -36,9 +36,10 @@ func init() {
 
 func runAttach(cmd *cobra.Command, args []string) error {
 	sessionID := args[0]
+	cfg := resolveConfig()
 
-	if host == "" {
-		return fmt.Errorf("--host is required")
+	if cfg.Host == "" {
+		return fmt.Errorf("no host specified\n\nProvide a host using one of:\n  --host/-H flag:    hqssh attach %s -H server.example.com\n  Environment var:   export HQSSH_HOST=server.example.com\n  Config file:       ~/.hqssh/config.yaml with default_host set", sessionID)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -55,13 +56,13 @@ func runAttach(cmd *cobra.Command, args []string) error {
 	}()
 
 	// Connect to daemon with retry on transient failures
-	fmt.Fprintf(os.Stderr, "Connecting to %s...\n", host)
+	fmt.Fprintf(os.Stderr, "Connecting to %s...\n", cfg.Host)
 	c, err := client.ConnectWithRetry(ctx, client.Config{
-		Host:            host,
-		Port:            port,
-		User:            user,
-		KeyPath:         keyPath,
-		Password:        password,
+		Host:            cfg.Host,
+		Port:            cfg.Port,
+		User:            cfg.User,
+		KeyPath:         cfg.Key,
+		Password:        cfg.Password,
 		InsecureHostKey: insecureKey,
 	})
 	if err != nil {
@@ -175,7 +176,7 @@ func runAttach(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintf(os.Stderr, "\nDetached from session %s\n", shortID(fullSessionID))
 	fmt.Fprintf(os.Stderr, "Session is still running. Reattach with:\n")
-	fmt.Fprintf(os.Stderr, "  hqssh attach %s -H %s\n", shortID(fullSessionID), host)
+	fmt.Fprintf(os.Stderr, "  hqssh attach %s -H %s\n", shortID(fullSessionID), cfg.Host)
 
 	return nil
 }
@@ -188,8 +189,8 @@ func getTerminalSize() (int, int) {
 	return width, height
 }
 
-func resolveSessionID(ctx context.Context, c *client.Client, shortID string) (string, error) {
-	// Try to find a session that matches the short ID
+func resolveSessionID(ctx context.Context, c *client.Client, idPrefix string) (string, error) {
+	// Try to find a session that matches the ID prefix
 	resp, err := c.SessionService.List(ctx, &pb.ListSessionsRequest{IncludeEnded: false})
 	if err != nil {
 		return "", err
@@ -197,16 +198,26 @@ func resolveSessionID(ctx context.Context, c *client.Client, shortID string) (st
 
 	var matches []*pb.Session
 	for _, s := range resp.Sessions {
-		if s.Id == shortID || (len(s.Id) >= len(shortID) && s.Id[:len(shortID)] == shortID) {
+		if s.Id == idPrefix || (len(s.Id) >= len(idPrefix) && s.Id[:len(idPrefix)] == idPrefix) {
 			matches = append(matches, s)
 		}
 	}
 
 	if len(matches) == 0 {
-		return "", fmt.Errorf("session not found: %s", shortID)
+		return "", fmt.Errorf("session not found: %s\n\nRun 'hqssh sessions' to list available sessions", idPrefix)
 	}
 	if len(matches) > 1 {
-		return "", fmt.Errorf("ambiguous session ID: %s (matches %d sessions)", shortID, len(matches))
+		var msg string
+		msg = fmt.Sprintf("ambiguous session ID '%s' matches %d sessions:\n", idPrefix, len(matches))
+		for _, m := range matches {
+			project := m.ProjectId
+			if project == "" {
+				project = "(shell)"
+			}
+			msg += fmt.Sprintf("  %s  %s  %s\n", shortID(m.Id), m.Tool, project)
+		}
+		msg += "\nUse a longer ID prefix to be specific"
+		return "", fmt.Errorf("%s", msg)
 	}
 
 	return matches[0].Id, nil

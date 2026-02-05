@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -16,6 +17,9 @@ import (
 var (
 	includeEnded bool
 	projectID    string
+	jsonOutput   bool
+	statusFilter string
+	toolFilter   string
 )
 
 var sessionsCmd = &cobra.Command{
@@ -31,24 +35,28 @@ Use 'hqssh attach <session-id>' to connect to a session.`,
 func init() {
 	sessionsCmd.Flags().BoolVar(&includeEnded, "all", false, "Include ended sessions")
 	sessionsCmd.Flags().StringVar(&projectID, "project", "", "Filter by project ID")
+	sessionsCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output as JSON")
+	sessionsCmd.Flags().StringVar(&statusFilter, "status", "", "Filter by status: RUNNING, IDLE, ENDED")
+	sessionsCmd.Flags().StringVar(&toolFilter, "tool", "", "Filter by tool: claude, codex, aider, shell")
 }
 
 func runSessions(cmd *cobra.Command, args []string) error {
-	if host == "" {
-		return fmt.Errorf("--host is required")
+	cfg := resolveConfig()
+	if cfg.Host == "" {
+		return fmt.Errorf("no host specified\n\nProvide a host using one of:\n  --host/-H flag:    hqssh sessions -H server.example.com\n  Environment var:   export HQSSH_HOST=server.example.com\n  Config file:       ~/.hqssh/config.yaml with default_host set")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	// Connect to daemon with retry on transient failures
-	fmt.Fprintf(os.Stderr, "Connecting to %s...\n", host)
+	fmt.Fprintf(os.Stderr, "Connecting to %s...\n", cfg.Host)
 	c, err := client.ConnectWithRetry(ctx, client.Config{
-		Host:            host,
-		Port:            port,
-		User:            user,
-		KeyPath:         keyPath,
-		Password:        password,
+		Host:            cfg.Host,
+		Port:            cfg.Port,
+		User:            cfg.User,
+		KeyPath:         cfg.Key,
+		Password:        cfg.Password,
 		InsecureHostKey: insecureKey,
 	})
 	if err != nil {
@@ -65,10 +73,45 @@ func runSessions(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("list sessions: %w", err)
 	}
 
-	if len(resp.Sessions) == 0 {
+	// Apply local filters
+	sessions := filterSessions(resp.Sessions)
+
+	// JSON output
+	if jsonOutput {
+		type jsonSession struct {
+			ID           string `json:"id"`
+			Tool         string `json:"tool"`
+			Status       string `json:"status"`
+			ProjectID    string `json:"project_id,omitempty"`
+			WorkingDir   string `json:"working_directory,omitempty"`
+			ClientCount  int32  `json:"client_count"`
+			CreatedAt    int64  `json:"created_at"`
+			LastActivity int64  `json:"last_activity"`
+		}
+		out := make([]jsonSession, len(sessions))
+		for i, s := range sessions {
+			out[i] = jsonSession{
+				ID:           s.Id,
+				Tool:         s.Tool,
+				Status:       statusString(s.Status),
+				ProjectID:    s.ProjectId,
+				WorkingDir:   s.WorkingDirectory,
+				ClientCount:  s.ClientCount,
+				CreatedAt:    s.CreatedAt,
+				LastActivity: s.LastActivity,
+			}
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(out)
+	}
+
+	if len(sessions) == 0 {
 		fmt.Println("No active sessions.")
-		fmt.Println("\nStart a session from the HQSSH mobile app, then attach with:")
-		fmt.Println("  hqssh attach <session-id> -H", host)
+		fmt.Println("\nTo create a new session:")
+		fmt.Printf("  hqssh new --tool claude -H %s\n", cfg.Host)
+		fmt.Println("\nOr start from the HQSSH mobile app, then attach with:")
+		fmt.Printf("  hqssh attach <session-id> -H %s\n", cfg.Host)
 		return nil
 	}
 
@@ -77,7 +120,7 @@ func runSessions(cmd *cobra.Command, args []string) error {
 	fmt.Fprintln(w, "ID\tTOOL\tSTATUS\tPROJECT\tCLIENTS\tLAST ACTIVITY")
 	fmt.Fprintln(w, "--\t----\t------\t-------\t-------\t-------------")
 
-	for _, s := range resp.Sessions {
+	for _, s := range sessions {
 		status := statusString(s.Status)
 		project := s.ProjectId
 		if project == "" {
@@ -100,9 +143,36 @@ func runSessions(cmd *cobra.Command, args []string) error {
 	w.Flush()
 
 	fmt.Println("\nTo attach to a session:")
-	fmt.Println("  hqssh attach <ID> -H", host)
+	fmt.Printf("  hqssh attach <ID> -H %s\n", cfg.Host)
 
 	return nil
+}
+
+func filterSessions(sessions []*pb.Session) []*pb.Session {
+	if statusFilter == "" && toolFilter == "" {
+		return sessions
+	}
+
+	var filtered []*pb.Session
+	for _, s := range sessions {
+		// Filter by status
+		if statusFilter != "" {
+			status := statusString(s.Status)
+			if !strings.EqualFold(status, statusFilter) {
+				continue
+			}
+		}
+
+		// Filter by tool
+		if toolFilter != "" {
+			if !strings.EqualFold(s.Tool, toolFilter) {
+				continue
+			}
+		}
+
+		filtered = append(filtered, s)
+	}
+	return filtered
 }
 
 func statusString(s pb.SessionStatus) string {

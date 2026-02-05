@@ -123,6 +123,9 @@ service SessionService {
 
   // Resize the terminal
   rpc Resize(ResizeRequest) returns (Empty);
+
+  // Get scrollback buffer (view output without attaching)
+  rpc GetScrollback(GetScrollbackRequest) returns (GetScrollbackResponse);
 }
 
 message Session {
@@ -188,6 +191,15 @@ message ResizeRequest {
   string session_id = 1;
   int32 cols = 2;
   int32 rows = 3;
+}
+
+message GetScrollbackRequest {
+  string session_id = 1;
+  int32 lines = 2;              // Number of lines (0 = all available)
+}
+
+message GetScrollbackResponse {
+  bytes data = 1;               // Raw terminal output
 }
 
 // ============================================================================

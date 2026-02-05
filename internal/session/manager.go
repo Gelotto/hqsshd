@@ -155,6 +155,15 @@ func (m *Manager) Get(sessionID string) *Session {
 	return m.sessions[sessionID]
 }
 
+// GetScrollback returns the scrollback buffer for a session
+func (m *Manager) GetScrollback(sessionID string) ([]byte, error) {
+	sess := m.Get(sessionID)
+	if sess == nil {
+		return nil, fmt.Errorf("session not found: %s", sessionID)
+	}
+	return sess.GetScrollback(), nil
+}
+
 // List returns all active sessions, optionally filtered by project
 func (m *Manager) List(projectID string, includeEnded bool) []*Session {
 	m.sessionsMu.RLock()

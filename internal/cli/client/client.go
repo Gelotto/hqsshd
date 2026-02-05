@@ -33,6 +33,7 @@ type Client struct {
 	SessionService pb.SessionServiceClient
 	ProjectService pb.ProjectServiceClient
 	SystemService  pb.SystemServiceClient
+	TaskService    pb.TaskServiceClient
 }
 
 // Config holds connection configuration.
@@ -57,7 +58,17 @@ func Connect(ctx context.Context, cfg Config) (*Client, error) {
 	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
 	sshClient, err := ssh.Dial("tcp", addr, sshConfig)
 	if err != nil {
-		return nil, fmt.Errorf("SSH connect: %w", err)
+		errStr := err.Error()
+		if contains(errStr, "connection refused") {
+			return nil, fmt.Errorf("SSH connection refused to %s\n\nCheck that:\n  - The host is correct\n  - SSH is running on port %d\n  - Firewall allows connections", addr, cfg.Port)
+		}
+		if contains(errStr, "no route to host") || contains(errStr, "network is unreachable") {
+			return nil, fmt.Errorf("cannot reach %s\n\nCheck your network connection and that the host is correct", cfg.Host)
+		}
+		if contains(errStr, "permission denied") || contains(errStr, "authentication failed") {
+			return nil, fmt.Errorf("SSH authentication failed to %s@%s\n\nTry:\n  -k, --key PATH    Use a specific key file\n  -p, --password    Use password authentication\n  --insecure        Skip host key verification (if that's the issue)", cfg.User, cfg.Host)
+		}
+		return nil, fmt.Errorf("SSH connect to %s: %w", addr, err)
 	}
 
 	// Create local listener for forwarding
@@ -90,6 +101,7 @@ func Connect(ctx context.Context, cfg Config) (*Client, error) {
 	c.SessionService = pb.NewSessionServiceClient(grpcConn)
 	c.ProjectService = pb.NewProjectServiceClient(grpcConn)
 	c.SystemService = pb.NewSystemServiceClient(grpcConn)
+	c.TaskService = pb.NewTaskServiceClient(grpcConn)
 
 	return c, nil
 }
@@ -283,7 +295,11 @@ func buildSSHConfig(cfg Config) (*ssh.ClientConfig, error) {
 	}
 
 	if len(authMethods) == 0 {
-		return nil, fmt.Errorf("no authentication methods available")
+		return nil, fmt.Errorf("no authentication methods available\n\n" +
+			"Tried default keys: ~/.ssh/id_ed25519, ~/.ssh/id_rsa, ~/.ssh/id_ecdsa\n\n" +
+			"Options:\n" +
+			"  -k, --key PATH    Specify a private key file\n" +
+			"  -p, --password    Use password authentication")
 	}
 
 	// Host key verification

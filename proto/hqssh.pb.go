@@ -1400,6 +1400,102 @@ func (x *ResizeRequest) GetRows() int32 {
 	return 0
 }
 
+type GetScrollbackRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Lines         int32                  `protobuf:"varint,2,opt,name=lines,proto3" json:"lines,omitempty"` // Number of lines (0 = all available)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetScrollbackRequest) Reset() {
+	*x = GetScrollbackRequest{}
+	mi := &file_proto_hqssh_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetScrollbackRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetScrollbackRequest) ProtoMessage() {}
+
+func (x *GetScrollbackRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_hqssh_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetScrollbackRequest.ProtoReflect.Descriptor instead.
+func (*GetScrollbackRequest) Descriptor() ([]byte, []int) {
+	return file_proto_hqssh_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *GetScrollbackRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *GetScrollbackRequest) GetLines() int32 {
+	if x != nil {
+		return x.Lines
+	}
+	return 0
+}
+
+type GetScrollbackResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Data          []byte                 `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"` // Raw terminal output
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetScrollbackResponse) Reset() {
+	*x = GetScrollbackResponse{}
+	mi := &file_proto_hqssh_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetScrollbackResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetScrollbackResponse) ProtoMessage() {}
+
+func (x *GetScrollbackResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_hqssh_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetScrollbackResponse.ProtoReflect.Descriptor instead.
+func (*GetScrollbackResponse) Descriptor() ([]byte, []int) {
+	return file_proto_hqssh_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *GetScrollbackResponse) GetData() []byte {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
 type Task struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	Id             string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -1417,7 +1513,7 @@ type Task struct {
 
 func (x *Task) Reset() {
 	*x = Task{}
-	mi := &file_proto_hqssh_proto_msgTypes[22]
+	mi := &file_proto_hqssh_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1429,7 +1525,7 @@ func (x *Task) String() string {
 func (*Task) ProtoMessage() {}
 
 func (x *Task) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_hqssh_proto_msgTypes[22]
+	mi := &file_proto_hqssh_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1442,7 +1538,7 @@ func (x *Task) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Task.ProtoReflect.Descriptor instead.
 func (*Task) Descriptor() ([]byte, []int) {
-	return file_proto_hqssh_proto_rawDescGZIP(), []int{22}
+	return file_proto_hqssh_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *Task) GetId() string {
@@ -1524,7 +1620,7 @@ type TaskRun struct {
 
 func (x *TaskRun) Reset() {
 	*x = TaskRun{}
-	mi := &file_proto_hqssh_proto_msgTypes[23]
+	mi := &file_proto_hqssh_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1536,7 +1632,7 @@ func (x *TaskRun) String() string {
 func (*TaskRun) ProtoMessage() {}
 
 func (x *TaskRun) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_hqssh_proto_msgTypes[23]
+	mi := &file_proto_hqssh_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1549,7 +1645,7 @@ func (x *TaskRun) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskRun.ProtoReflect.Descriptor instead.
 func (*TaskRun) Descriptor() ([]byte, []int) {
-	return file_proto_hqssh_proto_rawDescGZIP(), []int{23}
+	return file_proto_hqssh_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *TaskRun) GetId() string {
@@ -1618,7 +1714,7 @@ type ListTasksRequest struct {
 
 func (x *ListTasksRequest) Reset() {
 	*x = ListTasksRequest{}
-	mi := &file_proto_hqssh_proto_msgTypes[24]
+	mi := &file_proto_hqssh_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1630,7 +1726,7 @@ func (x *ListTasksRequest) String() string {
 func (*ListTasksRequest) ProtoMessage() {}
 
 func (x *ListTasksRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_hqssh_proto_msgTypes[24]
+	mi := &file_proto_hqssh_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1643,7 +1739,7 @@ func (x *ListTasksRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTasksRequest.ProtoReflect.Descriptor instead.
 func (*ListTasksRequest) Descriptor() ([]byte, []int) {
-	return file_proto_hqssh_proto_rawDescGZIP(), []int{24}
+	return file_proto_hqssh_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *ListTasksRequest) GetScope() TaskScope {
@@ -1669,7 +1765,7 @@ type ListTasksResponse struct {
 
 func (x *ListTasksResponse) Reset() {
 	*x = ListTasksResponse{}
-	mi := &file_proto_hqssh_proto_msgTypes[25]
+	mi := &file_proto_hqssh_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1681,7 +1777,7 @@ func (x *ListTasksResponse) String() string {
 func (*ListTasksResponse) ProtoMessage() {}
 
 func (x *ListTasksResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_hqssh_proto_msgTypes[25]
+	mi := &file_proto_hqssh_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1694,7 +1790,7 @@ func (x *ListTasksResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTasksResponse.ProtoReflect.Descriptor instead.
 func (*ListTasksResponse) Descriptor() ([]byte, []int) {
-	return file_proto_hqssh_proto_rawDescGZIP(), []int{25}
+	return file_proto_hqssh_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *ListTasksResponse) GetTasks() []*Task {
@@ -1720,7 +1816,7 @@ type CreateTaskRequest struct {
 
 func (x *CreateTaskRequest) Reset() {
 	*x = CreateTaskRequest{}
-	mi := &file_proto_hqssh_proto_msgTypes[26]
+	mi := &file_proto_hqssh_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1732,7 +1828,7 @@ func (x *CreateTaskRequest) String() string {
 func (*CreateTaskRequest) ProtoMessage() {}
 
 func (x *CreateTaskRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_hqssh_proto_msgTypes[26]
+	mi := &file_proto_hqssh_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1745,7 +1841,7 @@ func (x *CreateTaskRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateTaskRequest.ProtoReflect.Descriptor instead.
 func (*CreateTaskRequest) Descriptor() ([]byte, []int) {
-	return file_proto_hqssh_proto_rawDescGZIP(), []int{26}
+	return file_proto_hqssh_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *CreateTaskRequest) GetName() string {
@@ -1821,7 +1917,7 @@ type UpdateTaskRequest struct {
 
 func (x *UpdateTaskRequest) Reset() {
 	*x = UpdateTaskRequest{}
-	mi := &file_proto_hqssh_proto_msgTypes[27]
+	mi := &file_proto_hqssh_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1833,7 +1929,7 @@ func (x *UpdateTaskRequest) String() string {
 func (*UpdateTaskRequest) ProtoMessage() {}
 
 func (x *UpdateTaskRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_hqssh_proto_msgTypes[27]
+	mi := &file_proto_hqssh_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1846,7 +1942,7 @@ func (x *UpdateTaskRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateTaskRequest.ProtoReflect.Descriptor instead.
 func (*UpdateTaskRequest) Descriptor() ([]byte, []int) {
-	return file_proto_hqssh_proto_rawDescGZIP(), []int{27}
+	return file_proto_hqssh_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *UpdateTaskRequest) GetId() string {
@@ -1921,7 +2017,7 @@ type DeleteTaskRequest struct {
 
 func (x *DeleteTaskRequest) Reset() {
 	*x = DeleteTaskRequest{}
-	mi := &file_proto_hqssh_proto_msgTypes[28]
+	mi := &file_proto_hqssh_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1933,7 +2029,7 @@ func (x *DeleteTaskRequest) String() string {
 func (*DeleteTaskRequest) ProtoMessage() {}
 
 func (x *DeleteTaskRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_hqssh_proto_msgTypes[28]
+	mi := &file_proto_hqssh_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1946,7 +2042,7 @@ func (x *DeleteTaskRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteTaskRequest.ProtoReflect.Descriptor instead.
 func (*DeleteTaskRequest) Descriptor() ([]byte, []int) {
-	return file_proto_hqssh_proto_rawDescGZIP(), []int{28}
+	return file_proto_hqssh_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *DeleteTaskRequest) GetTaskId() string {
@@ -1965,7 +2061,7 @@ type RunTaskRequest struct {
 
 func (x *RunTaskRequest) Reset() {
 	*x = RunTaskRequest{}
-	mi := &file_proto_hqssh_proto_msgTypes[29]
+	mi := &file_proto_hqssh_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1977,7 +2073,7 @@ func (x *RunTaskRequest) String() string {
 func (*RunTaskRequest) ProtoMessage() {}
 
 func (x *RunTaskRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_hqssh_proto_msgTypes[29]
+	mi := &file_proto_hqssh_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1990,7 +2086,7 @@ func (x *RunTaskRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunTaskRequest.ProtoReflect.Descriptor instead.
 func (*RunTaskRequest) Descriptor() ([]byte, []int) {
-	return file_proto_hqssh_proto_rawDescGZIP(), []int{29}
+	return file_proto_hqssh_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *RunTaskRequest) GetTaskId() string {
@@ -2009,7 +2105,7 @@ type GetRunRequest struct {
 
 func (x *GetRunRequest) Reset() {
 	*x = GetRunRequest{}
-	mi := &file_proto_hqssh_proto_msgTypes[30]
+	mi := &file_proto_hqssh_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2021,7 +2117,7 @@ func (x *GetRunRequest) String() string {
 func (*GetRunRequest) ProtoMessage() {}
 
 func (x *GetRunRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_hqssh_proto_msgTypes[30]
+	mi := &file_proto_hqssh_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2034,7 +2130,7 @@ func (x *GetRunRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetRunRequest.ProtoReflect.Descriptor instead.
 func (*GetRunRequest) Descriptor() ([]byte, []int) {
-	return file_proto_hqssh_proto_rawDescGZIP(), []int{30}
+	return file_proto_hqssh_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *GetRunRequest) GetRunId() string {
@@ -2054,7 +2150,7 @@ type ListRunsRequest struct {
 
 func (x *ListRunsRequest) Reset() {
 	*x = ListRunsRequest{}
-	mi := &file_proto_hqssh_proto_msgTypes[31]
+	mi := &file_proto_hqssh_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2066,7 +2162,7 @@ func (x *ListRunsRequest) String() string {
 func (*ListRunsRequest) ProtoMessage() {}
 
 func (x *ListRunsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_hqssh_proto_msgTypes[31]
+	mi := &file_proto_hqssh_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2079,7 +2175,7 @@ func (x *ListRunsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListRunsRequest.ProtoReflect.Descriptor instead.
 func (*ListRunsRequest) Descriptor() ([]byte, []int) {
-	return file_proto_hqssh_proto_rawDescGZIP(), []int{31}
+	return file_proto_hqssh_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *ListRunsRequest) GetTaskId() string {
@@ -2105,7 +2201,7 @@ type ListRunsResponse struct {
 
 func (x *ListRunsResponse) Reset() {
 	*x = ListRunsResponse{}
-	mi := &file_proto_hqssh_proto_msgTypes[32]
+	mi := &file_proto_hqssh_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2117,7 +2213,7 @@ func (x *ListRunsResponse) String() string {
 func (*ListRunsResponse) ProtoMessage() {}
 
 func (x *ListRunsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_hqssh_proto_msgTypes[32]
+	mi := &file_proto_hqssh_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2130,7 +2226,7 @@ func (x *ListRunsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListRunsResponse.ProtoReflect.Descriptor instead.
 func (*ListRunsResponse) Descriptor() ([]byte, []int) {
-	return file_proto_hqssh_proto_rawDescGZIP(), []int{32}
+	return file_proto_hqssh_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *ListRunsResponse) GetRuns() []*TaskRun {
@@ -2149,7 +2245,7 @@ type CancelRunRequest struct {
 
 func (x *CancelRunRequest) Reset() {
 	*x = CancelRunRequest{}
-	mi := &file_proto_hqssh_proto_msgTypes[33]
+	mi := &file_proto_hqssh_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2161,7 +2257,7 @@ func (x *CancelRunRequest) String() string {
 func (*CancelRunRequest) ProtoMessage() {}
 
 func (x *CancelRunRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_hqssh_proto_msgTypes[33]
+	mi := &file_proto_hqssh_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2174,7 +2270,7 @@ func (x *CancelRunRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelRunRequest.ProtoReflect.Descriptor instead.
 func (*CancelRunRequest) Descriptor() ([]byte, []int) {
-	return file_proto_hqssh_proto_rawDescGZIP(), []int{33}
+	return file_proto_hqssh_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *CancelRunRequest) GetRunId() string {
@@ -2193,7 +2289,7 @@ type ExportTaskRequest struct {
 
 func (x *ExportTaskRequest) Reset() {
 	*x = ExportTaskRequest{}
-	mi := &file_proto_hqssh_proto_msgTypes[34]
+	mi := &file_proto_hqssh_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2205,7 +2301,7 @@ func (x *ExportTaskRequest) String() string {
 func (*ExportTaskRequest) ProtoMessage() {}
 
 func (x *ExportTaskRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_hqssh_proto_msgTypes[34]
+	mi := &file_proto_hqssh_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2218,7 +2314,7 @@ func (x *ExportTaskRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExportTaskRequest.ProtoReflect.Descriptor instead.
 func (*ExportTaskRequest) Descriptor() ([]byte, []int) {
-	return file_proto_hqssh_proto_rawDescGZIP(), []int{34}
+	return file_proto_hqssh_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *ExportTaskRequest) GetTaskId() string {
@@ -2237,7 +2333,7 @@ type ExportTaskResponse struct {
 
 func (x *ExportTaskResponse) Reset() {
 	*x = ExportTaskResponse{}
-	mi := &file_proto_hqssh_proto_msgTypes[35]
+	mi := &file_proto_hqssh_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2249,7 +2345,7 @@ func (x *ExportTaskResponse) String() string {
 func (*ExportTaskResponse) ProtoMessage() {}
 
 func (x *ExportTaskResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_hqssh_proto_msgTypes[35]
+	mi := &file_proto_hqssh_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2262,7 +2358,7 @@ func (x *ExportTaskResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExportTaskResponse.ProtoReflect.Descriptor instead.
 func (*ExportTaskResponse) Descriptor() ([]byte, []int) {
-	return file_proto_hqssh_proto_rawDescGZIP(), []int{35}
+	return file_proto_hqssh_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *ExportTaskResponse) GetYaml() string {
@@ -2281,7 +2377,7 @@ type ImportTaskRequest struct {
 
 func (x *ImportTaskRequest) Reset() {
 	*x = ImportTaskRequest{}
-	mi := &file_proto_hqssh_proto_msgTypes[36]
+	mi := &file_proto_hqssh_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2293,7 +2389,7 @@ func (x *ImportTaskRequest) String() string {
 func (*ImportTaskRequest) ProtoMessage() {}
 
 func (x *ImportTaskRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_hqssh_proto_msgTypes[36]
+	mi := &file_proto_hqssh_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2306,7 +2402,7 @@ func (x *ImportTaskRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ImportTaskRequest.ProtoReflect.Descriptor instead.
 func (*ImportTaskRequest) Descriptor() ([]byte, []int) {
-	return file_proto_hqssh_proto_rawDescGZIP(), []int{36}
+	return file_proto_hqssh_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *ImportTaskRequest) GetYaml() string {
@@ -2410,7 +2506,13 @@ const file_proto_hqssh_proto_rawDesc = "" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x12\n" +
 	"\x04cols\x18\x02 \x01(\x05R\x04cols\x12\x12\n" +
-	"\x04rows\x18\x03 \x01(\x05R\x04rows\"\x8a\x02\n" +
+	"\x04rows\x18\x03 \x01(\x05R\x04rows\"K\n" +
+	"\x14GetScrollbackRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x14\n" +
+	"\x05lines\x18\x02 \x01(\x05R\x05lines\"+\n" +
+	"\x15GetScrollbackResponse\x12\x12\n" +
+	"\x04data\x18\x01 \x01(\fR\x04data\"\x8a\x02\n" +
 	"\x04Task\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12 \n" +
@@ -2504,7 +2606,7 @@ const file_proto_hqssh_proto_rawDesc = "" +
 	"\x03Add\x12\x18.hqssh.AddProjectRequest\x1a\x0e.hqssh.Project\x123\n" +
 	"\x06Remove\x12\x1b.hqssh.RemoveProjectRequest\x1a\f.hqssh.Empty\x12;\n" +
 	"\bDiscover\x12\x16.hqssh.DiscoverRequest\x1a\x17.hqssh.DiscoverResponse\x12;\n" +
-	"\bGetTools\x12\x16.hqssh.GetToolsRequest\x1a\x17.hqssh.GetToolsResponse2\xfd\x02\n" +
+	"\bGetTools\x12\x16.hqssh.GetToolsRequest\x1a\x17.hqssh.GetToolsResponse2\xc9\x03\n" +
 	"\x0eSessionService\x125\n" +
 	"\x06Create\x12\x1b.hqssh.CreateSessionRequest\x1a\x0e.hqssh.Session\x12?\n" +
 	"\x04List\x12\x1a.hqssh.ListSessionsRequest\x1a\x1b.hqssh.ListSessionsResponse\x127\n" +
@@ -2512,7 +2614,8 @@ const file_proto_hqssh_proto_rawDesc = "" +
 	"\x05Input\x12\x14.hqssh.TerminalInput\x1a\f.hqssh.Empty(\x01\x12,\n" +
 	"\x06Detach\x12\x14.hqssh.DetachRequest\x1a\f.hqssh.Empty\x12/\n" +
 	"\x04Kill\x12\x19.hqssh.KillSessionRequest\x1a\f.hqssh.Empty\x12,\n" +
-	"\x06Resize\x12\x14.hqssh.ResizeRequest\x1a\f.hqssh.Empty2\x9b\x04\n" +
+	"\x06Resize\x12\x14.hqssh.ResizeRequest\x1a\f.hqssh.Empty\x12J\n" +
+	"\rGetScrollback\x12\x1b.hqssh.GetScrollbackRequest\x1a\x1c.hqssh.GetScrollbackResponse2\x9b\x04\n" +
 	"\vTaskService\x129\n" +
 	"\x04List\x12\x17.hqssh.ListTasksRequest\x1a\x18.hqssh.ListTasksResponse\x12/\n" +
 	"\x06Create\x12\x18.hqssh.CreateTaskRequest\x1a\v.hqssh.Task\x12/\n" +
@@ -2538,48 +2641,50 @@ func file_proto_hqssh_proto_rawDescGZIP() []byte {
 }
 
 var file_proto_hqssh_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_proto_hqssh_proto_msgTypes = make([]protoimpl.MessageInfo, 37)
+var file_proto_hqssh_proto_msgTypes = make([]protoimpl.MessageInfo, 39)
 var file_proto_hqssh_proto_goTypes = []any{
-	(SessionStatus)(0),           // 0: hqssh.SessionStatus
-	(TaskScope)(0),               // 1: hqssh.TaskScope
-	(TaskRunStatus)(0),           // 2: hqssh.TaskRunStatus
-	(*Empty)(nil),                // 3: hqssh.Empty
-	(*SystemInfo)(nil),           // 4: hqssh.SystemInfo
-	(*SystemStatus)(nil),         // 5: hqssh.SystemStatus
-	(*Project)(nil),              // 6: hqssh.Project
-	(*ListProjectsRequest)(nil),  // 7: hqssh.ListProjectsRequest
-	(*ListProjectsResponse)(nil), // 8: hqssh.ListProjectsResponse
-	(*AddProjectRequest)(nil),    // 9: hqssh.AddProjectRequest
-	(*RemoveProjectRequest)(nil), // 10: hqssh.RemoveProjectRequest
-	(*DiscoverRequest)(nil),      // 11: hqssh.DiscoverRequest
-	(*DiscoverResponse)(nil),     // 12: hqssh.DiscoverResponse
-	(*GetToolsRequest)(nil),      // 13: hqssh.GetToolsRequest
-	(*GetToolsResponse)(nil),     // 14: hqssh.GetToolsResponse
-	(*Session)(nil),              // 15: hqssh.Session
-	(*CreateSessionRequest)(nil), // 16: hqssh.CreateSessionRequest
-	(*ListSessionsRequest)(nil),  // 17: hqssh.ListSessionsRequest
-	(*ListSessionsResponse)(nil), // 18: hqssh.ListSessionsResponse
-	(*AttachRequest)(nil),        // 19: hqssh.AttachRequest
-	(*TerminalOutput)(nil),       // 20: hqssh.TerminalOutput
-	(*TerminalInput)(nil),        // 21: hqssh.TerminalInput
-	(*DetachRequest)(nil),        // 22: hqssh.DetachRequest
-	(*KillSessionRequest)(nil),   // 23: hqssh.KillSessionRequest
-	(*ResizeRequest)(nil),        // 24: hqssh.ResizeRequest
-	(*Task)(nil),                 // 25: hqssh.Task
-	(*TaskRun)(nil),              // 26: hqssh.TaskRun
-	(*ListTasksRequest)(nil),     // 27: hqssh.ListTasksRequest
-	(*ListTasksResponse)(nil),    // 28: hqssh.ListTasksResponse
-	(*CreateTaskRequest)(nil),    // 29: hqssh.CreateTaskRequest
-	(*UpdateTaskRequest)(nil),    // 30: hqssh.UpdateTaskRequest
-	(*DeleteTaskRequest)(nil),    // 31: hqssh.DeleteTaskRequest
-	(*RunTaskRequest)(nil),       // 32: hqssh.RunTaskRequest
-	(*GetRunRequest)(nil),        // 33: hqssh.GetRunRequest
-	(*ListRunsRequest)(nil),      // 34: hqssh.ListRunsRequest
-	(*ListRunsResponse)(nil),     // 35: hqssh.ListRunsResponse
-	(*CancelRunRequest)(nil),     // 36: hqssh.CancelRunRequest
-	(*ExportTaskRequest)(nil),    // 37: hqssh.ExportTaskRequest
-	(*ExportTaskResponse)(nil),   // 38: hqssh.ExportTaskResponse
-	(*ImportTaskRequest)(nil),    // 39: hqssh.ImportTaskRequest
+	(SessionStatus)(0),            // 0: hqssh.SessionStatus
+	(TaskScope)(0),                // 1: hqssh.TaskScope
+	(TaskRunStatus)(0),            // 2: hqssh.TaskRunStatus
+	(*Empty)(nil),                 // 3: hqssh.Empty
+	(*SystemInfo)(nil),            // 4: hqssh.SystemInfo
+	(*SystemStatus)(nil),          // 5: hqssh.SystemStatus
+	(*Project)(nil),               // 6: hqssh.Project
+	(*ListProjectsRequest)(nil),   // 7: hqssh.ListProjectsRequest
+	(*ListProjectsResponse)(nil),  // 8: hqssh.ListProjectsResponse
+	(*AddProjectRequest)(nil),     // 9: hqssh.AddProjectRequest
+	(*RemoveProjectRequest)(nil),  // 10: hqssh.RemoveProjectRequest
+	(*DiscoverRequest)(nil),       // 11: hqssh.DiscoverRequest
+	(*DiscoverResponse)(nil),      // 12: hqssh.DiscoverResponse
+	(*GetToolsRequest)(nil),       // 13: hqssh.GetToolsRequest
+	(*GetToolsResponse)(nil),      // 14: hqssh.GetToolsResponse
+	(*Session)(nil),               // 15: hqssh.Session
+	(*CreateSessionRequest)(nil),  // 16: hqssh.CreateSessionRequest
+	(*ListSessionsRequest)(nil),   // 17: hqssh.ListSessionsRequest
+	(*ListSessionsResponse)(nil),  // 18: hqssh.ListSessionsResponse
+	(*AttachRequest)(nil),         // 19: hqssh.AttachRequest
+	(*TerminalOutput)(nil),        // 20: hqssh.TerminalOutput
+	(*TerminalInput)(nil),         // 21: hqssh.TerminalInput
+	(*DetachRequest)(nil),         // 22: hqssh.DetachRequest
+	(*KillSessionRequest)(nil),    // 23: hqssh.KillSessionRequest
+	(*ResizeRequest)(nil),         // 24: hqssh.ResizeRequest
+	(*GetScrollbackRequest)(nil),  // 25: hqssh.GetScrollbackRequest
+	(*GetScrollbackResponse)(nil), // 26: hqssh.GetScrollbackResponse
+	(*Task)(nil),                  // 27: hqssh.Task
+	(*TaskRun)(nil),               // 28: hqssh.TaskRun
+	(*ListTasksRequest)(nil),      // 29: hqssh.ListTasksRequest
+	(*ListTasksResponse)(nil),     // 30: hqssh.ListTasksResponse
+	(*CreateTaskRequest)(nil),     // 31: hqssh.CreateTaskRequest
+	(*UpdateTaskRequest)(nil),     // 32: hqssh.UpdateTaskRequest
+	(*DeleteTaskRequest)(nil),     // 33: hqssh.DeleteTaskRequest
+	(*RunTaskRequest)(nil),        // 34: hqssh.RunTaskRequest
+	(*GetRunRequest)(nil),         // 35: hqssh.GetRunRequest
+	(*ListRunsRequest)(nil),       // 36: hqssh.ListRunsRequest
+	(*ListRunsResponse)(nil),      // 37: hqssh.ListRunsResponse
+	(*CancelRunRequest)(nil),      // 38: hqssh.CancelRunRequest
+	(*ExportTaskRequest)(nil),     // 39: hqssh.ExportTaskRequest
+	(*ExportTaskResponse)(nil),    // 40: hqssh.ExportTaskResponse
+	(*ImportTaskRequest)(nil),     // 41: hqssh.ImportTaskRequest
 }
 var file_proto_hqssh_proto_depIdxs = []int32{
 	6,  // 0: hqssh.ListProjectsResponse.projects:type_name -> hqssh.Project
@@ -2589,10 +2694,10 @@ var file_proto_hqssh_proto_depIdxs = []int32{
 	1,  // 4: hqssh.Task.scope:type_name -> hqssh.TaskScope
 	2,  // 5: hqssh.TaskRun.status:type_name -> hqssh.TaskRunStatus
 	1,  // 6: hqssh.ListTasksRequest.scope:type_name -> hqssh.TaskScope
-	25, // 7: hqssh.ListTasksResponse.tasks:type_name -> hqssh.Task
+	27, // 7: hqssh.ListTasksResponse.tasks:type_name -> hqssh.Task
 	1,  // 8: hqssh.CreateTaskRequest.scope:type_name -> hqssh.TaskScope
 	1,  // 9: hqssh.UpdateTaskRequest.scope:type_name -> hqssh.TaskScope
-	26, // 10: hqssh.ListRunsResponse.runs:type_name -> hqssh.TaskRun
+	28, // 10: hqssh.ListRunsResponse.runs:type_name -> hqssh.TaskRun
 	3,  // 11: hqssh.SystemService.GetInfo:input_type -> hqssh.Empty
 	3,  // 12: hqssh.SystemService.GetStatus:input_type -> hqssh.Empty
 	7,  // 13: hqssh.ProjectService.List:input_type -> hqssh.ListProjectsRequest
@@ -2607,42 +2712,44 @@ var file_proto_hqssh_proto_depIdxs = []int32{
 	22, // 22: hqssh.SessionService.Detach:input_type -> hqssh.DetachRequest
 	23, // 23: hqssh.SessionService.Kill:input_type -> hqssh.KillSessionRequest
 	24, // 24: hqssh.SessionService.Resize:input_type -> hqssh.ResizeRequest
-	27, // 25: hqssh.TaskService.List:input_type -> hqssh.ListTasksRequest
-	29, // 26: hqssh.TaskService.Create:input_type -> hqssh.CreateTaskRequest
-	30, // 27: hqssh.TaskService.Update:input_type -> hqssh.UpdateTaskRequest
-	31, // 28: hqssh.TaskService.Delete:input_type -> hqssh.DeleteTaskRequest
-	32, // 29: hqssh.TaskService.Run:input_type -> hqssh.RunTaskRequest
-	33, // 30: hqssh.TaskService.GetRun:input_type -> hqssh.GetRunRequest
-	34, // 31: hqssh.TaskService.ListRuns:input_type -> hqssh.ListRunsRequest
-	36, // 32: hqssh.TaskService.CancelRun:input_type -> hqssh.CancelRunRequest
-	37, // 33: hqssh.TaskService.Export:input_type -> hqssh.ExportTaskRequest
-	39, // 34: hqssh.TaskService.Import:input_type -> hqssh.ImportTaskRequest
-	4,  // 35: hqssh.SystemService.GetInfo:output_type -> hqssh.SystemInfo
-	5,  // 36: hqssh.SystemService.GetStatus:output_type -> hqssh.SystemStatus
-	8,  // 37: hqssh.ProjectService.List:output_type -> hqssh.ListProjectsResponse
-	6,  // 38: hqssh.ProjectService.Add:output_type -> hqssh.Project
-	3,  // 39: hqssh.ProjectService.Remove:output_type -> hqssh.Empty
-	12, // 40: hqssh.ProjectService.Discover:output_type -> hqssh.DiscoverResponse
-	14, // 41: hqssh.ProjectService.GetTools:output_type -> hqssh.GetToolsResponse
-	15, // 42: hqssh.SessionService.Create:output_type -> hqssh.Session
-	18, // 43: hqssh.SessionService.List:output_type -> hqssh.ListSessionsResponse
-	20, // 44: hqssh.SessionService.Attach:output_type -> hqssh.TerminalOutput
-	3,  // 45: hqssh.SessionService.Input:output_type -> hqssh.Empty
-	3,  // 46: hqssh.SessionService.Detach:output_type -> hqssh.Empty
-	3,  // 47: hqssh.SessionService.Kill:output_type -> hqssh.Empty
-	3,  // 48: hqssh.SessionService.Resize:output_type -> hqssh.Empty
-	28, // 49: hqssh.TaskService.List:output_type -> hqssh.ListTasksResponse
-	25, // 50: hqssh.TaskService.Create:output_type -> hqssh.Task
-	25, // 51: hqssh.TaskService.Update:output_type -> hqssh.Task
-	3,  // 52: hqssh.TaskService.Delete:output_type -> hqssh.Empty
-	26, // 53: hqssh.TaskService.Run:output_type -> hqssh.TaskRun
-	26, // 54: hqssh.TaskService.GetRun:output_type -> hqssh.TaskRun
-	35, // 55: hqssh.TaskService.ListRuns:output_type -> hqssh.ListRunsResponse
-	3,  // 56: hqssh.TaskService.CancelRun:output_type -> hqssh.Empty
-	38, // 57: hqssh.TaskService.Export:output_type -> hqssh.ExportTaskResponse
-	25, // 58: hqssh.TaskService.Import:output_type -> hqssh.Task
-	35, // [35:59] is the sub-list for method output_type
-	11, // [11:35] is the sub-list for method input_type
+	25, // 25: hqssh.SessionService.GetScrollback:input_type -> hqssh.GetScrollbackRequest
+	29, // 26: hqssh.TaskService.List:input_type -> hqssh.ListTasksRequest
+	31, // 27: hqssh.TaskService.Create:input_type -> hqssh.CreateTaskRequest
+	32, // 28: hqssh.TaskService.Update:input_type -> hqssh.UpdateTaskRequest
+	33, // 29: hqssh.TaskService.Delete:input_type -> hqssh.DeleteTaskRequest
+	34, // 30: hqssh.TaskService.Run:input_type -> hqssh.RunTaskRequest
+	35, // 31: hqssh.TaskService.GetRun:input_type -> hqssh.GetRunRequest
+	36, // 32: hqssh.TaskService.ListRuns:input_type -> hqssh.ListRunsRequest
+	38, // 33: hqssh.TaskService.CancelRun:input_type -> hqssh.CancelRunRequest
+	39, // 34: hqssh.TaskService.Export:input_type -> hqssh.ExportTaskRequest
+	41, // 35: hqssh.TaskService.Import:input_type -> hqssh.ImportTaskRequest
+	4,  // 36: hqssh.SystemService.GetInfo:output_type -> hqssh.SystemInfo
+	5,  // 37: hqssh.SystemService.GetStatus:output_type -> hqssh.SystemStatus
+	8,  // 38: hqssh.ProjectService.List:output_type -> hqssh.ListProjectsResponse
+	6,  // 39: hqssh.ProjectService.Add:output_type -> hqssh.Project
+	3,  // 40: hqssh.ProjectService.Remove:output_type -> hqssh.Empty
+	12, // 41: hqssh.ProjectService.Discover:output_type -> hqssh.DiscoverResponse
+	14, // 42: hqssh.ProjectService.GetTools:output_type -> hqssh.GetToolsResponse
+	15, // 43: hqssh.SessionService.Create:output_type -> hqssh.Session
+	18, // 44: hqssh.SessionService.List:output_type -> hqssh.ListSessionsResponse
+	20, // 45: hqssh.SessionService.Attach:output_type -> hqssh.TerminalOutput
+	3,  // 46: hqssh.SessionService.Input:output_type -> hqssh.Empty
+	3,  // 47: hqssh.SessionService.Detach:output_type -> hqssh.Empty
+	3,  // 48: hqssh.SessionService.Kill:output_type -> hqssh.Empty
+	3,  // 49: hqssh.SessionService.Resize:output_type -> hqssh.Empty
+	26, // 50: hqssh.SessionService.GetScrollback:output_type -> hqssh.GetScrollbackResponse
+	30, // 51: hqssh.TaskService.List:output_type -> hqssh.ListTasksResponse
+	27, // 52: hqssh.TaskService.Create:output_type -> hqssh.Task
+	27, // 53: hqssh.TaskService.Update:output_type -> hqssh.Task
+	3,  // 54: hqssh.TaskService.Delete:output_type -> hqssh.Empty
+	28, // 55: hqssh.TaskService.Run:output_type -> hqssh.TaskRun
+	28, // 56: hqssh.TaskService.GetRun:output_type -> hqssh.TaskRun
+	37, // 57: hqssh.TaskService.ListRuns:output_type -> hqssh.ListRunsResponse
+	3,  // 58: hqssh.TaskService.CancelRun:output_type -> hqssh.Empty
+	40, // 59: hqssh.TaskService.Export:output_type -> hqssh.ExportTaskResponse
+	27, // 60: hqssh.TaskService.Import:output_type -> hqssh.Task
+	36, // [36:61] is the sub-list for method output_type
+	11, // [11:36] is the sub-list for method input_type
 	11, // [11:11] is the sub-list for extension type_name
 	11, // [11:11] is the sub-list for extension extendee
 	0,  // [0:11] is the sub-list for field type_name
@@ -2659,7 +2766,7 @@ func file_proto_hqssh_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_hqssh_proto_rawDesc), len(file_proto_hqssh_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   37,
+			NumMessages:   39,
 			NumExtensions: 0,
 			NumServices:   4,
 		},
