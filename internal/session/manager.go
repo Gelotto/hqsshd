@@ -31,7 +31,9 @@ func NewManager(idleTimeoutSec, maxSessions, historySize int) *Manager {
 	// Convert lines to bytes (estimate ~100 bytes per line)
 	maxBufferSize := historySize * 100
 	if maxBufferSize <= 0 {
-		maxBufferSize = 1024 * 1024 // 1MB default
+		// 10MB default - AI tools (Claude, Codex, etc.) produce lots of output
+		// with syntax highlighting, markdown, and verbose responses
+		maxBufferSize = 10 * 1024 * 1024
 	}
 
 	m := &Manager{
