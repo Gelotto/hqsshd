@@ -1,4 +1,5 @@
 .PHONY: build proto install install-user clean deps run tidy test test-race test-coverage test-verbose test-short
+.PHONY: $(BUILD_DIR)/$(DAEMON_BINARY) $(BUILD_DIR)/$(CLI_BINARY)
 
 # Go parameters
 GOCMD=go

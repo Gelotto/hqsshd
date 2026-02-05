@@ -31,8 +31,8 @@ func TestRegistry_AddAndGet(t *testing.T) {
 	r.Add(project)
 
 	got := r.Get("test-id")
-	if got != project {
-		t.Errorf("Get() = %v, want %v", got, project)
+	if got == nil || got.ID != project.ID || got.Name != project.Name || got.Path != project.Path {
+		t.Errorf("Get() fields don't match: got %v, want %v", got, project)
 	}
 }
 
@@ -56,8 +56,8 @@ func TestRegistry_GetByPath(t *testing.T) {
 	r.Add(project)
 
 	got := r.GetByPath("/path/to/project")
-	if got != project {
-		t.Errorf("GetByPath() = %v, want %v", got, project)
+	if got == nil || got.ID != project.ID || got.Name != project.Name || got.Path != project.Path {
+		t.Errorf("GetByPath() fields don't match: got %v, want %v", got, project)
 	}
 
 	// Unknown path

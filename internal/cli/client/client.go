@@ -13,6 +13,7 @@ import (
 	pb "github.com/gelotto/hqsshd/proto"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
+	"golang.org/x/term"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -334,8 +335,25 @@ func loadPrivateKey(path string) (ssh.Signer, error) {
 
 	signer, err := ssh.ParsePrivateKey(key)
 	if err != nil {
-		// Try with empty passphrase, then prompt if needed
+		// Key may be passphrase-protected - check the error
+		if _, ok := err.(*ssh.PassphraseMissingError); ok {
+			passphrase, promptErr := promptPassphrase(path)
+			if promptErr != nil {
+				return nil, fmt.Errorf("passphrase prompt: %w", promptErr)
+			}
+			return ssh.ParsePrivateKeyWithPassphrase(key, passphrase)
+		}
 		return nil, err
 	}
 	return signer, nil
+}
+
+func promptPassphrase(keyPath string) ([]byte, error) {
+	fmt.Fprintf(os.Stderr, "Enter passphrase for %s: ", keyPath)
+	passphrase, err := term.ReadPassword(int(os.Stdin.Fd()))
+	fmt.Fprintln(os.Stderr) // newline after password input
+	if err != nil {
+		return nil, err
+	}
+	return passphrase, nil
 }

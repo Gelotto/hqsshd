@@ -55,10 +55,10 @@ func TestStore_CreateAndGet(t *testing.T) {
 		t.Errorf("task.TimeoutSeconds = %d, want 300", task.TimeoutSeconds)
 	}
 
-	// Get should return same task
+	// Get should return a copy with matching fields
 	got := s.Get(task.ID)
-	if got != task {
-		t.Error("Get should return same task pointer")
+	if got == nil || got.ID != task.ID || got.Name != task.Name || got.Tool != task.Tool {
+		t.Errorf("Get() fields don't match: got %v, want %v", got, task)
 	}
 }
 

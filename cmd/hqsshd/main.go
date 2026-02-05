@@ -84,14 +84,14 @@ func main() {
 		sig := <-sigChan
 		logging.Info("received shutdown signal", "signal", sig.String())
 		srv.Stop()
-		logging.Info("hqsshd stopped")
-		os.Exit(0)
 	}()
 
-	// Start server
+	// Start server (blocks until Stop() is called or an error occurs)
 	logging.Info("hqsshd ready", "socket", cfg.Socket, "tcp_port", cfg.TCPPort)
 	if err := srv.Start(); err != nil {
 		logging.Error("server error", "error", err)
 		os.Exit(1)
 	}
+
+	logging.Info("hqsshd stopped")
 }

@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/gelotto/hqsshd/internal/cli/config"
+	daemonconfig "github.com/gelotto/hqsshd/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -16,9 +17,6 @@ var (
 	keyPath     string
 	password    string
 	insecureKey bool
-
-	// portChanged tracks if -P was explicitly set
-	portChanged bool
 )
 
 var rootCmd = &cobra.Command{
@@ -103,6 +101,6 @@ var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print version information",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("hqssh CLI v0.1.0")
+		fmt.Printf("hqssh CLI v%s\n", daemonconfig.DaemonVersion)
 	},
 }

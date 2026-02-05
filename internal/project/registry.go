@@ -72,8 +72,13 @@ func (r *Registry) Save() error {
 		return err
 	}
 
+	// Atomic write: write to temp file then rename to avoid corruption on crash
 	path := filepath.Join(r.dataDir, registryFile)
-	return os.WriteFile(path, data, 0644)
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
 }
 
 // Add adds a project to the registry
@@ -95,27 +100,33 @@ func (r *Registry) Remove(id string) bool {
 	return false
 }
 
-// Get retrieves a project by ID
+// Get retrieves a project by ID (returns a copy to prevent mutation of internal state)
 func (r *Registry) Get(id string) *Project {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.projects[id]
+	p := r.projects[id]
+	if p == nil {
+		return nil
+	}
+	cp := *p
+	return &cp
 }
 
-// GetByPath retrieves a project by its path
+// GetByPath retrieves a project by its path (returns a copy to prevent mutation of internal state)
 func (r *Registry) GetByPath(path string) *Project {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	for _, p := range r.projects {
 		if p.Path == path {
-			return p
+			cp := *p
+			return &cp
 		}
 	}
 	return nil
 }
 
-// List returns all projects
+// List returns all projects (returns copies to prevent mutation of internal state)
 func (r *Registry) List(favoritesOnly bool) []*Project {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -125,7 +136,8 @@ func (r *Registry) List(favoritesOnly bool) []*Project {
 		if favoritesOnly && !p.IsFavorite {
 			continue
 		}
-		projects = append(projects, p)
+		cp := *p
+		projects = append(projects, &cp)
 	}
 	return projects
 }

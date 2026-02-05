@@ -159,5 +159,5 @@ func (c *Config) SaveToPath(path string) error {
 		return err
 	}
 
-	return os.WriteFile(path, data, 0644)
+	return os.WriteFile(path, data, 0600)
 }

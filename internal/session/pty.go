@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/creack/pty"
@@ -47,6 +48,7 @@ func (s *Session) StartPTY() error {
 
 	s.pty = ptmx
 	s.cmd = cmd.Process
+	s.execCmd = cmd
 
 	logging.Info("session PTY started",
 		"session_id", s.ID,
@@ -137,6 +139,11 @@ func (s *Session) readPTYOutput() {
 	for {
 		n, err := s.pty.Read(buf)
 		if err != nil {
+			// Reap the child process to avoid zombies
+			if s.execCmd != nil {
+				s.execCmd.Wait()
+			}
+
 			if err == io.EOF {
 				// Process exited normally
 				logging.Info("PTY process exited",
@@ -231,10 +238,10 @@ func (s *Session) Kill() error {
 		"pid", s.cmd.Pid,
 	)
 
-	// Send SIGTERM first
-	if err := s.cmd.Signal(os.Interrupt); err != nil {
-		// If interrupt fails, try kill
-		logging.Debug("SIGINT failed, sending SIGKILL",
+	// Send SIGTERM for graceful shutdown
+	if err := s.cmd.Signal(syscall.SIGTERM); err != nil {
+		// If SIGTERM fails, try SIGKILL
+		logging.Debug("SIGTERM failed, sending SIGKILL",
 			"session_id", s.ID,
 			"error", err,
 		)

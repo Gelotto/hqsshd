@@ -2,7 +2,6 @@ package task
 
 import (
 	"os"
-	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -475,10 +474,4 @@ func TestExecutor_InvalidWorkingDir_Integration(t *testing.T) {
 	if !strings.Contains(finalError, "does not exist") {
 		t.Errorf("error = %q, want to contain 'does not exist'", finalError)
 	}
-}
-
-// Helper to check if a command exists
-func commandExists(name string) bool {
-	_, err := exec.LookPath(name)
-	return err == nil
 }

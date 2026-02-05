@@ -50,18 +50,19 @@ func (e *Executor) Run(taskID string, projectPath string) (*Run, error) {
 		return nil, fmt.Errorf("task not found: %s", taskID)
 	}
 
-	// Check if task is already running
-	if existing := e.runStore.GetRunning(taskID); existing != nil {
-		return nil, fmt.Errorf("task is already running (run_id: %s)", existing.ID)
-	}
-
 	// For interactive tasks, we don't support them in MVP
 	if task.Interactive {
 		return nil, fmt.Errorf("interactive tasks not yet supported")
 	}
 
-	// Create a new run
+	// Atomic check-and-create under lock to prevent TOCTOU race
+	e.runningMu.Lock()
+	if existing := e.runStore.GetRunning(taskID); existing != nil {
+		e.runningMu.Unlock()
+		return nil, fmt.Errorf("task is already running (run_id: %s)", existing.ID)
+	}
 	run := e.runStore.Create(taskID)
+	e.runningMu.Unlock()
 
 	// Execute in background
 	go e.executeTask(task, run, projectPath)
@@ -91,12 +92,12 @@ func (e *Executor) Cancel(runID string) error {
 		return fmt.Errorf("failed to cancel run")
 	}
 
-	// Cancel the context and kill the process
+	// Cancel the context and kill the process.
+	// Don't call cmd.Wait() here — the executeTask() goroutine handles it.
+	// Concurrent Wait() on the same exec.Cmd is undefined behavior.
 	rt.cancel()
 	if rt.cmd != nil && rt.cmd.Process != nil {
 		rt.cmd.Process.Kill()
-		// Wait for process to actually exit to avoid zombie processes
-		rt.cmd.Wait()
 	}
 
 	e.runStore.Cancel(runID)
@@ -192,8 +193,13 @@ func (e *Executor) executeTask(task *Task, run *Run, projectPath string) {
 		defer close(outputDone)
 		// Read output with size limit
 		limitedReader := io.LimitReader(ptmx, maxOutputSize)
-		if _, err := io.Copy(&outputBuf, limitedReader); err != nil {
+		n, err := io.Copy(&outputBuf, limitedReader)
+		if err != nil {
 			fmt.Printf("Warning: error reading task output: %v\n", err)
+		}
+		// If we hit the size limit, notify the user
+		if n >= maxOutputSize {
+			outputBuf.WriteString("\n[Output truncated at 1MB]")
 		}
 	}()
 
@@ -241,29 +247,32 @@ func (e *Executor) executeTask(task *Task, run *Run, projectPath string) {
 	}
 }
 
-// buildCommand builds the exec.Cmd for the task's tool
+// buildCommand builds the exec.Cmd for the task's tool.
+// All non-shell commands are wrapped in a login shell to ensure
+// tools installed via nvm/pyenv/asdf are available on PATH.
 func (e *Executor) buildCommand(task *Task, workingDir string) *exec.Cmd {
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/bash"
+	}
+
 	var cmd *exec.Cmd
 
 	switch task.Tool {
 	case "claude":
 		// Claude with --print flag for non-interactive mode
-		cmd = exec.Command("claude", "--print", task.Prompt)
+		cmd = exec.Command(shell, "-l", "-c", fmt.Sprintf("claude --print %q", task.Prompt))
 	case "codex":
-		cmd = exec.Command("codex", task.Prompt)
+		cmd = exec.Command(shell, "-l", "-c", fmt.Sprintf("codex %q", task.Prompt))
 	case "aider":
 		// Aider with --yes for non-interactive
-		cmd = exec.Command("aider", "--yes", "--message", task.Prompt)
+		cmd = exec.Command(shell, "-l", "-c", fmt.Sprintf("aider --yes --message %q", task.Prompt))
 	case "shell":
 		// For shell, run the prompt as a command
-		shell := os.Getenv("SHELL")
-		if shell == "" {
-			shell = "/bin/bash"
-		}
-		cmd = exec.Command(shell, "-c", task.Prompt)
+		cmd = exec.Command(shell, "-l", "-c", task.Prompt)
 	default:
 		// Try to run the tool directly
-		cmd = exec.Command(task.Tool, task.Prompt)
+		cmd = exec.Command(shell, "-l", "-c", fmt.Sprintf("%s %q", task.Tool, task.Prompt))
 	}
 
 	cmd.Dir = workingDir
@@ -284,20 +293,24 @@ func (e *Executor) GetRunningCount() int {
 	return len(e.running)
 }
 
-// Close stops all running tasks
+// Close stops all running tasks.
+// Only cancels context and kills processes. The executeTask() goroutine
+// handles cmd.Wait() — calling it here too would be a concurrent Wait() race.
 func (e *Executor) Close() {
 	e.runningMu.Lock()
-	defer e.runningMu.Unlock()
+	// Copy entries to avoid holding the lock during Kill
+	snapshot := make(map[string]*runningTask, len(e.running))
+	for k, v := range e.running {
+		snapshot[k] = v
+	}
+	e.running = make(map[string]*runningTask)
+	e.runningMu.Unlock()
 
-	for runID, rt := range e.running {
+	for runID, rt := range snapshot {
 		rt.cancel()
 		if rt.cmd != nil && rt.cmd.Process != nil {
 			rt.cmd.Process.Kill()
-			// Wait for process to actually exit to avoid orphaned processes
-			rt.cmd.Wait()
 		}
 		e.runStore.Cancel(runID)
 	}
-
-	e.running = make(map[string]*runningTask)
 }

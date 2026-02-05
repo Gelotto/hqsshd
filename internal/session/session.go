@@ -3,6 +3,7 @@ package session
 
 import (
 	"os"
+	"os/exec"
 	"sync"
 	"time"
 
@@ -54,6 +55,7 @@ type Session struct {
 	// PTY management
 	pty       *os.File
 	cmd       *os.Process
+	execCmd   *exec.Cmd // Retained for cmd.Wait() to reap the child process
 	ptySizeMu sync.Mutex
 
 	// Client management
@@ -314,12 +316,16 @@ func (s *Session) broadcast(data []byte) {
 	defer s.clientsMu.RUnlock()
 
 	for _, ch := range s.clients {
-		// Non-blocking send - drop if channel is full
-		select {
-		case ch <- data:
-		default:
-			// Client is slow, skip this chunk
-		}
+		// Non-blocking send - drop if channel is full.
+		// Recover from panic in case channel was closed between
+		// the IsDone() check above and this send (narrow race with Close()).
+		func() {
+			defer func() { recover() }()
+			select {
+			case ch <- data:
+			default:
+			}
+		}()
 	}
 }
 

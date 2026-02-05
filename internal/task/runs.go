@@ -111,8 +111,13 @@ func (s *RunStore) Save() error {
 		return err
 	}
 
+	// Atomic write: write to temp file then rename to avoid corruption on crash
 	path := filepath.Join(s.dataDir, runsFile)
-	return os.WriteFile(path, data, 0644)
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
 }
 
 // Create creates a new run in pending state
@@ -137,11 +142,16 @@ func (s *RunStore) Create(taskID string) *Run {
 	return run
 }
 
-// Get retrieves a run by ID
+// Get retrieves a run by ID (returns a copy to prevent mutation of internal state)
 func (s *RunStore) Get(runID string) *Run {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.runs[runID]
+	r := s.runs[runID]
+	if r == nil {
+		return nil
+	}
+	copy := *r
+	return &copy
 }
 
 // UpdateStatus updates the status of a run
@@ -227,7 +237,7 @@ func (s *RunStore) Cancel(runID string) bool {
 	return false
 }
 
-// ListByTask returns runs for a specific task
+// ListByTask returns runs for a specific task (returns copies to prevent mutation)
 func (s *RunStore) ListByTask(taskID string, limit int) []*Run {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -243,18 +253,22 @@ func (s *RunStore) ListByTask(taskID string, limit int) []*Run {
 	}
 
 	result := make([]*Run, limit)
-	copy(result, runs[:limit])
+	for i := 0; i < limit; i++ {
+		cp := *runs[i]
+		result[i] = &cp
+	}
 	return result
 }
 
-// ListAll returns all runs, optionally limited
+// ListAll returns all runs, optionally limited (returns copies to prevent mutation)
 func (s *RunStore) ListAll(limit int) []*Run {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	runs := make([]*Run, 0, len(s.runs))
 	for _, r := range s.runs {
-		runs = append(runs, r)
+		cp := *r
+		runs = append(runs, &cp)
 	}
 
 	// Sort by started_at descending
@@ -270,13 +284,15 @@ func (s *RunStore) ListAll(limit int) []*Run {
 }
 
 // GetRunning returns the currently running run for a task, if any
+// (returns a copy to prevent mutation of internal state)
 func (s *RunStore) GetRunning(taskID string) *Run {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	for _, r := range s.byTask[taskID] {
 		if r.Status == RunStatusRunning {
-			return r
+			copy := *r
+			return &copy
 		}
 	}
 	return nil

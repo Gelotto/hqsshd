@@ -103,31 +103,27 @@ func (m *Manager) cleanupLoop() {
 
 // cleanup removes ended sessions and checks for idle timeouts
 func (m *Manager) cleanup() {
+	now := time.Now()
+
+	// Phase 1: Identify sessions to close while holding the lock briefly
 	m.sessionsMu.Lock()
 
-	now := time.Now()
-	toDelete := []string{}
+	type sessionToClose struct {
+		id   string
+		sess *Session
+	}
+	var toClose []sessionToClose
 	var endedCount, idleTimeoutCount int
 
 	for id, sess := range m.sessions {
 		status := sess.Status()
 
-		// Remove ended sessions
 		if status == StatusEnded {
-			toDelete = append(toDelete, id)
+			toClose = append(toClose, sessionToClose{id, sess})
 			endedCount++
-			// Close session to flush logger and compress log file
-			sess.Close()
-			// Mark as ended in store
-			if !m.store.MarkEnded(id) {
-				logging.Warn("failed to mark ended session in store",
-					"session_id", id,
-				)
-			}
 			continue
 		}
 
-		// Check idle timeout
 		if m.idleTimeout > 0 && status == StatusIdle {
 			idleFor := now.Sub(sess.LastActivity())
 			if idleFor > m.idleTimeout {
@@ -137,27 +133,31 @@ func (m *Manager) cleanup() {
 					"idle_duration", idleFor.String(),
 					"idle_timeout", m.idleTimeout.String(),
 				)
-				sess.Close()
-				toDelete = append(toDelete, id)
+				toClose = append(toClose, sessionToClose{id, sess})
 				idleTimeoutCount++
-				// Mark as ended in store
-				if !m.store.MarkEnded(id) {
-					logging.Warn("failed to mark idle-timeout session in store",
-						"session_id", id,
-					)
-				}
 			}
 		}
 	}
 
-	for _, id := range toDelete {
-		delete(m.sessions, id)
+	// Remove from map while we have the lock
+	for _, sc := range toClose {
+		delete(m.sessions, sc.id)
 	}
 
 	m.sessionsMu.Unlock()
 
+	// Phase 2: Close sessions without holding the lock (Close() can block)
+	for _, sc := range toClose {
+		sc.sess.Close()
+		if !m.store.MarkEnded(sc.id) {
+			logging.Warn("failed to mark session as ended in store",
+				"session_id", sc.id,
+			)
+		}
+	}
+
 	// Log cleanup summary if any sessions were removed
-	if len(toDelete) > 0 {
+	if len(toClose) > 0 {
 		logging.Debug("cleanup completed",
 			"removed_ended", endedCount,
 			"removed_idle_timeout", idleTimeoutCount,

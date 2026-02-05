@@ -296,7 +296,7 @@ func (s *projectService) Add(ctx context.Context, req *pb.AddProjectRequest) (*p
 
 	s.server.registry.Add(proj)
 	if err := s.server.registry.Save(); err != nil {
-		fmt.Printf("Warning: failed to save registry: %v\n", err)
+		return nil, status.Errorf(codes.Internal, "failed to save registry: %v", err)
 	}
 
 	return projectToProto(proj), nil
@@ -312,7 +312,7 @@ func (s *projectService) Remove(ctx context.Context, req *pb.RemoveProjectReques
 	}
 
 	if err := s.server.registry.Save(); err != nil {
-		fmt.Printf("Warning: failed to save registry: %v\n", err)
+		return nil, status.Errorf(codes.Internal, "failed to save registry: %v", err)
 	}
 
 	return &pb.Empty{}, nil
@@ -327,7 +327,7 @@ func (s *projectService) Discover(ctx context.Context, req *pb.DiscoverRequest) 
 	// Merge with existing registry
 	s.server.registry.MergeDiscovered(discovered)
 	if err := s.server.registry.Save(); err != nil {
-		fmt.Printf("Warning: failed to save registry: %v\n", err)
+		return nil, status.Errorf(codes.Internal, "failed to save registry: %v", err)
 	}
 
 	pbProjects := make([]*pb.Project, len(discovered))
@@ -523,8 +523,12 @@ func (s *sessionService) Input(stream pb.SessionService_InputServer) error {
 }
 
 func (s *sessionService) Detach(ctx context.Context, req *pb.DetachRequest) (*pb.Empty, error) {
-	// Note: Detach is handled automatically when Attach stream ends
-	// This RPC is for explicit detach requests
+	// Detach is handled automatically when the Attach stream ends (the defer
+	// in Attach calls sessionManager.Detach). This RPC exists for protocol
+	// completeness but is effectively a no-op — the Attach stream's context
+	// cancellation is the canonical detach mechanism. The client ID is only
+	// known to the Attach goroutine that created it, so we cannot remove a
+	// specific client here without additional tracking infrastructure.
 	return &pb.Empty{}, nil
 }
 
@@ -784,7 +788,7 @@ func (s *taskService) Create(ctx context.Context, req *pb.CreateTaskRequest) (*p
 	)
 
 	if err := s.server.taskStore.Save(); err != nil {
-		fmt.Printf("Warning: failed to save task store: %v\n", err)
+		return nil, status.Errorf(codes.Internal, "failed to save task store: %v", err)
 	}
 
 	return taskToProto(t), nil
@@ -833,7 +837,7 @@ func (s *taskService) Update(ctx context.Context, req *pb.UpdateTaskRequest) (*p
 	}
 
 	if err := s.server.taskStore.Save(); err != nil {
-		fmt.Printf("Warning: failed to save task store: %v\n", err)
+		return nil, status.Errorf(codes.Internal, "failed to save task store: %v", err)
 	}
 
 	return taskToProto(t), nil
@@ -853,10 +857,10 @@ func (s *taskService) Delete(ctx context.Context, req *pb.DeleteTaskRequest) (*p
 	s.server.taskRunStore.DeleteByTask(taskID)
 
 	if err := s.server.taskStore.Save(); err != nil {
-		fmt.Printf("Warning: failed to save task store: %v\n", err)
+		return nil, status.Errorf(codes.Internal, "failed to save task store: %v", err)
 	}
 	if err := s.server.taskRunStore.Save(); err != nil {
-		fmt.Printf("Warning: failed to save task run store: %v\n", err)
+		return nil, status.Errorf(codes.Internal, "failed to save task run store: %v", err)
 	}
 
 	return &pb.Empty{}, nil
@@ -890,7 +894,7 @@ func (s *taskService) Run(ctx context.Context, req *pb.RunTaskRequest) (*pb.Task
 
 	// Save run store
 	if err := s.server.taskRunStore.Save(); err != nil {
-		fmt.Printf("Warning: failed to save task run store: %v\n", err)
+		return nil, status.Errorf(codes.Internal, "failed to save task run store: %v", err)
 	}
 
 	return taskRunToProto(run), nil
@@ -942,7 +946,7 @@ func (s *taskService) CancelRun(ctx context.Context, req *pb.CancelRunRequest) (
 	}
 
 	if err := s.server.taskRunStore.Save(); err != nil {
-		fmt.Printf("Warning: failed to save task run store: %v\n", err)
+		return nil, status.Errorf(codes.Internal, "failed to save task run store: %v", err)
 	}
 
 	return &pb.Empty{}, nil

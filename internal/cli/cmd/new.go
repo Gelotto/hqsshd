@@ -3,24 +3,19 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"os/signal"
-	"path/filepath"
-	"sync"
 	"syscall"
-	"time"
 
 	"github.com/gelotto/hqsshd/internal/cli/client"
 	pb "github.com/gelotto/hqsshd/proto"
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 )
 
 var (
-	newTool      string
-	newProject   string
-	newNoAttach  bool
+	newTool     string
+	newProject  string
+	newNoAttach bool
 )
 
 var newCmd = &cobra.Command{
@@ -82,18 +77,12 @@ func runNew(cmd *cobra.Command, args []string) error {
 	defer c.Close()
 
 	// Get terminal size
-	cols, rows := getTermSize()
+	cols, rows := termSize()
 
-	// Resolve project path if specified
+	// Pass --project value as-is to the daemon.
+	// The daemon resolves relative paths on its own filesystem.
+	// Do NOT resolve locally — "." means the remote CWD, not the local one.
 	workingDir := newProject
-	if workingDir == "." {
-		// Get current directory (local) - note: this is the local current dir
-		// The daemon will need to interpret "." on its end
-		wd, err := os.Getwd()
-		if err == nil {
-			workingDir = filepath.Base(wd) // Just use the directory name as a hint
-		}
-	}
 
 	// Create the session
 	fmt.Fprintf(os.Stderr, "Creating %s session...\n", newTool)
@@ -115,122 +104,8 @@ func runNew(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Attach to the session (reuse attach logic)
+	// Attach to the session (reuse shared attach logic)
 	fmt.Fprintf(os.Stderr, "Attaching to session %s...\n", shortID(session.Id))
 
-	// Establish gRPC streams BEFORE entering raw mode
-	outputStream, err := c.SessionService.Attach(ctx, &pb.AttachRequest{
-		SessionId: session.Id,
-		Cols:      int32(cols),
-		Rows:      int32(rows),
-	})
-	if err != nil {
-		return fmt.Errorf("attach: %w", err)
-	}
-
-	// Start input stream
-	inputStream, err := c.SessionService.Input(ctx)
-	if err != nil {
-		return fmt.Errorf("input stream: %w", err)
-	}
-
-	// Set terminal to raw mode
-	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
-	if err != nil {
-		return fmt.Errorf("raw mode: %w", err)
-	}
-	defer term.Restore(int(os.Stdin.Fd()), oldState)
-
-	// Handle terminal resize
-	go handleResizeNew(ctx, c, session.Id)
-
-	// WaitGroup for input goroutine cleanup
-	var inputWg sync.WaitGroup
-
-	// Read from terminal and send to session
-	inputWg.Add(1)
-	go func() {
-		defer inputWg.Done()
-		defer inputStream.CloseSend()
-		buf := make([]byte, 1024)
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
-
-			n, err := os.Stdin.Read(buf)
-			if err != nil {
-				return
-			}
-
-			if n > 0 {
-				err = inputStream.Send(&pb.TerminalInput{
-					SessionId: session.Id,
-					Data:      buf[:n],
-				})
-				if err != nil {
-					return
-				}
-			}
-		}
-	}()
-
-	// Read from session and write to terminal
-	for {
-		output, err := outputStream.Recv()
-		if err != nil {
-			if err == io.EOF || ctx.Err() != nil {
-				break
-			}
-			cancel()
-			inputWg.Wait()
-			return fmt.Errorf("receive: %w", err)
-		}
-
-		os.Stdout.Write(output.Data)
-	}
-
-	cancel()
-	inputWg.Wait()
-
-	// Detach
-	detachCtx, detachCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer detachCancel()
-	c.SessionService.Detach(detachCtx, &pb.DetachRequest{SessionId: session.Id})
-
-	fmt.Fprintf(os.Stderr, "\nDetached from session %s\n", shortID(session.Id))
-	fmt.Fprintf(os.Stderr, "Session is still running. Reattach with:\n")
-	fmt.Fprintf(os.Stderr, "  hqssh attach %s -H %s\n", shortID(session.Id), cfg.Host)
-
-	return nil
-}
-
-func getTermSize() (int, int) {
-	width, height, err := term.GetSize(int(os.Stdout.Fd()))
-	if err != nil {
-		return 80, 24
-	}
-	return width, height
-}
-
-func handleResizeNew(ctx context.Context, c *client.Client, sessionID string) {
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGWINCH)
-	defer signal.Stop(sigChan)
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-sigChan:
-			cols, rows := getTermSize()
-			c.SessionService.Resize(ctx, &pb.ResizeRequest{
-				SessionId: sessionID,
-				Cols:      int32(cols),
-				Rows:      int32(rows),
-			})
-		}
-	}
+	return attachToSession(ctx, cancel, c, session.Id, cfg.Host)
 }

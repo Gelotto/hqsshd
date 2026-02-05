@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -11,28 +12,22 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var (
-	logsLines int
-)
-
 var logsCmd = &cobra.Command{
 	Use:   "logs <session-id>",
-	Short: "View session scrollback buffer",
+	Short: "View session log (works for active and ended sessions)",
 	Long: `View the output history of a session without attaching.
 
-Shows the terminal output that has been captured in the session's
-scrollback buffer. Useful for checking if a task completed.
+Reads from the persistent session log, so it works for both active
+and ended sessions. Useful for checking if a task completed.
 
 Examples:
-  hqssh logs abc12345                  # View full scrollback
-  hqssh logs abc12345 -n 100           # Last 100 lines
+  hqssh logs abc12345                  # View full log
   hqssh logs abc12345 -H server        # Specify host`,
 	Args: cobra.ExactArgs(1),
 	RunE: runLogs,
 }
 
 func init() {
-	logsCmd.Flags().IntVarP(&logsLines, "lines", "n", 0, "Number of lines (0 = all)")
 	rootCmd.AddCommand(logsCmd)
 }
 
@@ -62,67 +57,39 @@ func runLogs(cmd *cobra.Command, args []string) error {
 	}
 	defer c.Close()
 
-	// Resolve session ID
-	fullSessionID, err := resolveSessionIDForLogs(ctx, c, sessionID)
+	// Resolve session ID (include ended sessions for logs)
+	fullSessionID, err := resolveSessionIncludeEnded(ctx, c, sessionID)
 	if err != nil {
 		return fmt.Errorf("find session: %w", err)
 	}
 
-	// Get scrollback
-	resp, err := c.SessionService.GetScrollback(ctx, &pb.GetScrollbackRequest{
+	// Stream session log (works for both active and ended sessions)
+	stream, err := c.SessionService.GetSessionLog(ctx, &pb.GetSessionLogRequest{
 		SessionId: fullSessionID,
-		Lines:     int32(logsLines),
 	})
 	if err != nil {
-		return fmt.Errorf("get scrollback: %w", err)
+		return fmt.Errorf("get session log: %w", err)
 	}
 
-	// Output the scrollback data
-	if len(resp.Data) == 0 {
+	hasOutput := false
+	for {
+		chunk, err := stream.Recv()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("read session log: %w", err)
+		}
+		if len(chunk.Data) > 0 {
+			hasOutput = true
+			os.Stdout.Write(chunk.Data)
+		}
+	}
+
+	if !hasOutput {
 		fmt.Fprintf(os.Stderr, "No output captured yet.\n")
 		return nil
 	}
 
-	os.Stdout.Write(resp.Data)
-
-	// Ensure newline at end
-	if len(resp.Data) > 0 && resp.Data[len(resp.Data)-1] != '\n' {
-		fmt.Println()
-	}
-
 	return nil
-}
-
-// resolveSessionIDForLogs is like resolveSessionID but includes ended sessions
-func resolveSessionIDForLogs(ctx context.Context, c *client.Client, idPrefix string) (string, error) {
-	resp, err := c.SessionService.List(ctx, &pb.ListSessionsRequest{IncludeEnded: true})
-	if err != nil {
-		return "", err
-	}
-
-	var matches []*pb.Session
-	for _, s := range resp.Sessions {
-		if s.Id == idPrefix || (len(s.Id) >= len(idPrefix) && s.Id[:len(idPrefix)] == idPrefix) {
-			matches = append(matches, s)
-		}
-	}
-
-	if len(matches) == 0 {
-		return "", fmt.Errorf("session not found: %s\n\nRun 'hqssh sessions --all' to list all sessions including ended ones", idPrefix)
-	}
-	if len(matches) > 1 {
-		var msg string
-		msg = fmt.Sprintf("ambiguous session ID '%s' matches %d sessions:\n", idPrefix, len(matches))
-		for _, m := range matches {
-			project := m.ProjectId
-			if project == "" {
-				project = "(shell)"
-			}
-			msg += fmt.Sprintf("  %s  %s  %s\n", shortID(m.Id), m.Tool, project)
-		}
-		msg += "\nUse a longer ID prefix to be specific"
-		return "", fmt.Errorf("%s", msg)
-	}
-
-	return matches[0].Id, nil
 }

@@ -99,8 +99,13 @@ func (s *Store) Save() error {
 		return err
 	}
 
+	// Atomic write: write to temp file then rename to avoid corruption on crash
 	path := filepath.Join(s.dataDir, tasksFile)
-	return os.WriteFile(path, data, 0644)
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
 }
 
 // Create creates a new task
@@ -127,11 +132,16 @@ func (s *Store) Create(name, description, tool string, scope TaskScope, projectI
 	return task
 }
 
-// Get retrieves a task by ID
+// Get retrieves a task by ID (returns a copy to prevent mutation of internal state)
 func (s *Store) Get(id string) *Task {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.tasks[id]
+	t := s.tasks[id]
+	if t == nil {
+		return nil
+	}
+	cp := *t
+	return &cp
 }
 
 // Update updates an existing task
@@ -170,6 +180,7 @@ func (s *Store) Delete(id string) bool {
 }
 
 // List returns all tasks, optionally filtered by scope and/or project
+// (returns copies to prevent mutation of internal state)
 func (s *Store) List(scope TaskScope, projectID string) []*Task {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -186,7 +197,8 @@ func (s *Store) List(scope TaskScope, projectID string) []*Task {
 			continue
 		}
 
-		tasks = append(tasks, t)
+		cp := *t
+		tasks = append(tasks, &cp)
 	}
 
 	return tasks

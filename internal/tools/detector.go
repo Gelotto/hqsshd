@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -86,19 +87,25 @@ func (d *Detector) ClearCache() {
 	d.cache = make(map[string]bool)
 }
 
-// detectTool runs the detection command for a tool
+// detectTool runs the detection command for a tool.
+// Commands are wrapped in a login shell to ensure tools installed via
+// nvm/pyenv/asdf/cargo are available on PATH.
 func (d *Detector) detectTool(tool config.ToolConfig) bool {
 	if tool.Detect == "" {
 		// Default: try "which <command>"
 		tool.Detect = "which " + tool.Command
 	}
 
-	parts := strings.Fields(tool.Detect)
-	if len(parts) == 0 {
+	if strings.TrimSpace(tool.Detect) == "" {
 		return false
 	}
 
-	cmd := exec.Command(parts[0], parts[1:]...)
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/bash"
+	}
+
+	cmd := exec.Command(shell, "-l", "-c", tool.Detect)
 	err := cmd.Run()
 	return err == nil
 }
