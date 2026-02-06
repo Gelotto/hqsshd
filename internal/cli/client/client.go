@@ -69,6 +69,15 @@ func Connect(ctx context.Context, cfg Config) (*Client, error) {
 		if contains(errStr, "permission denied") || contains(errStr, "authentication failed") {
 			return nil, fmt.Errorf("SSH authentication failed to %s@%s\n\nTry:\n  -k, --key PATH    Use a specific key file\n  -p, --password    Use password authentication\n  --insecure        Skip host key verification (if that's the issue)", cfg.User, cfg.Host)
 		}
+		if contains(errStr, "key is unknown") {
+			return nil, fmt.Errorf("host '%s' not in ~/.ssh/known_hosts\n\nRun 'ssh %s' first to add it, or use --insecure to skip verification", cfg.Host, cfg.Host)
+		}
+		if contains(errStr, "key mismatch") {
+			return nil, fmt.Errorf("WARNING: host key for '%s' has changed!\n\nThis could indicate a man-in-the-middle attack.\nIf the server was reinstalled, update ~/.ssh/known_hosts:\n  ssh-keygen -R %s\n\nThen reconnect, or use --insecure to skip verification", cfg.Host, cfg.Host)
+		}
+		if contains(errStr, "key is revoked") {
+			return nil, fmt.Errorf("host key for '%s' has been revoked in ~/.ssh/known_hosts", cfg.Host)
+		}
 		return nil, fmt.Errorf("SSH connect to %s: %w", addr, err)
 	}
 
@@ -160,6 +169,9 @@ func isPermanentError(errStr string) bool {
 		"no authentication methods",
 		"host key verification failed",
 		"known_hosts",
+		"knownhosts",
+		"key mismatch",
+		"key is revoked",
 	}
 
 	for _, pattern := range permanentPatterns {
@@ -308,6 +320,8 @@ func buildSSHConfig(cfg Config) (*ssh.ClientConfig, error) {
 	if cfg.InsecureHostKey {
 		hostKeyCallback = ssh.InsecureIgnoreHostKey()
 		fmt.Fprintln(os.Stderr, "Warning: Host key verification disabled")
+	} else if isLoopback(cfg.Host) {
+		hostKeyCallback = ssh.InsecureIgnoreHostKey()
 	} else {
 		// Use known_hosts file for verification
 		home, _ := os.UserHomeDir()
@@ -346,6 +360,15 @@ func loadPrivateKey(path string) (ssh.Signer, error) {
 		return nil, err
 	}
 	return signer, nil
+}
+
+// isLoopback returns true if the host resolves to a loopback address.
+func isLoopback(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func promptPassphrase(keyPath string) ([]byte, error) {
