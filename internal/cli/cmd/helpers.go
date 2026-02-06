@@ -15,6 +15,69 @@ import (
 	"golang.org/x/term"
 )
 
+// connectDaemon connects to the daemon using the connection priority:
+//  1. --socket/-S flag → connect to that specific Unix socket
+//  2. --host/-H flag (or config/env) → SSH tunnel to remote daemon
+//  3. Neither → auto-detect local daemon at /tmp/hqssh.sock
+//
+// Returns: client, hostLabel (empty for local, hostname for remote), error.
+func connectDaemon(ctx context.Context) (*client.Client, string, error) {
+	// Priority 1: explicit --socket flag
+	if socket != "" {
+		fmt.Fprintf(os.Stderr, "Connecting to local daemon (%s)...\n", socket)
+		c, err := client.ConnectLocal(ctx, socket)
+		if err != nil {
+			return nil, "", fmt.Errorf("connect to socket %s: %w", socket, err)
+		}
+		return c, "", nil
+	}
+
+	// Priority 2: --host flag or config/env
+	cfg := resolveConfig()
+	if cfg.Host != "" {
+		fmt.Fprintf(os.Stderr, "Connecting to %s...\n", cfg.Host)
+		c, err := client.ConnectWithRetry(ctx, client.Config{
+			Host:            cfg.Host,
+			Port:            cfg.Port,
+			User:            cfg.User,
+			KeyPath:         cfg.Key,
+			Password:        cfg.Password,
+			InsecureHostKey: insecureKey,
+		})
+		if err != nil {
+			return nil, "", fmt.Errorf("connect: %w", err)
+		}
+		return c, cfg.Host, nil
+	}
+
+	// Priority 3: auto-detect local daemon socket
+	socketPath := client.DefaultSocketPath
+	if _, err := os.Stat(socketPath); err == nil {
+		fmt.Fprintf(os.Stderr, "Connecting to local daemon...\n")
+		c, err := client.ConnectLocal(ctx, socketPath)
+		if err != nil {
+			return nil, "", fmt.Errorf("connect to local daemon: %w", err)
+		}
+		return c, "", nil
+	}
+
+	return nil, "", fmt.Errorf("no daemon found\n\n" +
+		"Local:   Start the daemon with 'hqsshd' (listens on /tmp/hqssh.sock)\n" +
+		"Remote:  Specify a host with -H flag, config file, or HQSSH_HOST env var\n\n" +
+		"Examples:\n" +
+		"  hqsshd                                  # Start local daemon\n" +
+		"  hqssh sessions -H server.example.com    # Connect to remote host\n" +
+		"  hqssh sessions -S /path/to/hqssh.sock   # Connect to specific socket")
+}
+
+// hostFlag returns " -H <label>" for remote connections, empty string for local.
+func hostFlag(label string) string {
+	if label == "" {
+		return ""
+	}
+	return " -H " + label
+}
+
 // termSize returns the current terminal dimensions, falling back to 80x24.
 func termSize() (cols, rows int) {
 	width, height, err := term.GetSize(int(os.Stdout.Fd()))
@@ -25,17 +88,17 @@ func termSize() (cols, rows int) {
 }
 
 // resolveSession finds a session by ID prefix (active sessions only).
-func resolveSession(ctx context.Context, c *client.Client, idPrefix string) (string, error) {
-	return resolveSessionByPrefix(ctx, c, idPrefix, false)
+func resolveSession(ctx context.Context, c *client.Client, idPrefix, hostLabel string) (string, error) {
+	return resolveSessionByPrefix(ctx, c, idPrefix, false, hostLabel)
 }
 
 // resolveSessionIncludeEnded finds a session by ID prefix (including ended sessions).
-func resolveSessionIncludeEnded(ctx context.Context, c *client.Client, idPrefix string) (string, error) {
-	return resolveSessionByPrefix(ctx, c, idPrefix, true)
+func resolveSessionIncludeEnded(ctx context.Context, c *client.Client, idPrefix, hostLabel string) (string, error) {
+	return resolveSessionByPrefix(ctx, c, idPrefix, true, hostLabel)
 }
 
 // resolveSessionByPrefix finds a session matching the given ID prefix.
-func resolveSessionByPrefix(ctx context.Context, c *client.Client, idPrefix string, includeEnded bool) (string, error) {
+func resolveSessionByPrefix(ctx context.Context, c *client.Client, idPrefix string, includeEnded bool, hostLabel string) (string, error) {
 	resp, err := c.SessionService.List(ctx, &pb.ListSessionsRequest{IncludeEnded: includeEnded})
 	if err != nil {
 		return "", err
@@ -49,9 +112,9 @@ func resolveSessionByPrefix(ctx context.Context, c *client.Client, idPrefix stri
 	}
 
 	if len(matches) == 0 {
-		hint := "'hqssh sessions'"
+		hint := fmt.Sprintf("'hqssh sessions%s'", hostFlag(hostLabel))
 		if includeEnded {
-			hint = "'hqssh sessions --all'"
+			hint = fmt.Sprintf("'hqssh sessions --all%s'", hostFlag(hostLabel))
 		}
 		return "", fmt.Errorf("session not found: %s\n\nRun %s to list available sessions", idPrefix, hint)
 	}
@@ -160,7 +223,7 @@ func attachToSession(ctx context.Context, cancel context.CancelFunc, c *client.C
 
 	fmt.Fprintf(os.Stderr, "\nDetached from session %s\n", shortID(sessionID))
 	fmt.Fprintf(os.Stderr, "Session is still running. Reattach with:\n")
-	fmt.Fprintf(os.Stderr, "  hqssh attach %s -H %s\n", shortID(sessionID), host)
+	fmt.Fprintf(os.Stderr, "  hqssh attach %s%s\n", shortID(sessionID), hostFlag(host))
 
 	return nil
 }

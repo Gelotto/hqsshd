@@ -5,10 +5,7 @@ After=network.target
 
 [Service]
 Type=simple
-# Default: user install location
-ExecStart=%h/.local/bin/hqsshd
-# Alternative: system-wide install
-# ExecStart=/usr/local/bin/hqsshd
+ExecStart=/usr/local/bin/hqsshd
 Restart=on-failure
 RestartSec=5
 Environment=HOME=%h

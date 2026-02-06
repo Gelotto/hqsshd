@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gelotto/hqsshd/internal/cli/client"
 	pb "github.com/gelotto/hqsshd/proto"
 	"github.com/spf13/cobra"
 )
@@ -35,27 +34,12 @@ func init() {
 }
 
 func runInfo(cmd *cobra.Command, args []string) error {
-	cfg := resolveConfig()
-
-	if cfg.Host == "" {
-		return fmt.Errorf("no host specified\n\nProvide a host using one of:\n  --host/-H flag:    hqssh info -H server.example.com\n  Environment var:   export HQSSH_HOST=server.example.com\n  Config file:       ~/.hqssh/config.yaml with default_host set")
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Connect to daemon
-	fmt.Fprintf(os.Stderr, "Connecting to %s...\n", cfg.Host)
-	c, err := client.ConnectWithRetry(ctx, client.Config{
-		Host:            cfg.Host,
-		Port:            cfg.Port,
-		User:            cfg.User,
-		KeyPath:         cfg.Key,
-		Password:        cfg.Password,
-		InsecureHostKey: insecureKey,
-	})
+	c, hostLabel, err := connectDaemon(ctx)
 	if err != nil {
-		return fmt.Errorf("connect: %w", err)
+		return err
 	}
 	defer c.Close()
 
@@ -73,6 +57,10 @@ func runInfo(cmd *cobra.Command, args []string) error {
 
 	// JSON output
 	if infoJSON {
+		host := hostLabel
+		if host == "" {
+			host = "localhost"
+		}
 		output := struct {
 			Host           string   `json:"host"`
 			Hostname       string   `json:"hostname"`
@@ -84,7 +72,7 @@ func runInfo(cmd *cobra.Command, args []string) error {
 			ActiveSessions int32    `json:"active_sessions"`
 			ActiveProjects int32    `json:"active_projects"`
 		}{
-			Host:           cfg.Host,
+			Host:           host,
 			Hostname:       info.Hostname,
 			OS:             info.Os,
 			Arch:           info.Arch,
@@ -100,7 +88,11 @@ func runInfo(cmd *cobra.Command, args []string) error {
 	}
 
 	// Human-readable output
-	fmt.Printf("\nHost:       %s\n", cfg.Host)
+	infoHost := hostLabel
+	if infoHost == "" {
+		infoHost = "localhost"
+	}
+	fmt.Printf("\nHost:       %s\n", infoHost)
 	fmt.Printf("Hostname:   %s\n", info.Hostname)
 	fmt.Printf("OS:         %s (%s)\n", info.Os, info.Arch)
 	fmt.Printf("Daemon:     hqsshd %s\n", info.DaemonVersion)

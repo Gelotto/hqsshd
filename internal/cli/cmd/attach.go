@@ -7,7 +7,6 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/gelotto/hqsshd/internal/cli/client"
 	"github.com/spf13/cobra"
 )
 
@@ -31,11 +30,6 @@ func init() {
 
 func runAttach(cmd *cobra.Command, args []string) error {
 	sessionID := args[0]
-	cfg := resolveConfig()
-
-	if cfg.Host == "" {
-		return fmt.Errorf("no host specified\n\nProvide a host using one of:\n  --host/-H flag:    hqssh attach %s -H server.example.com\n  Environment var:   export HQSSH_HOST=server.example.com\n  Config file:       ~/.hqssh/config.yaml with default_host set", sessionID)
-	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -50,28 +44,19 @@ func runAttach(cmd *cobra.Command, args []string) error {
 		cancel()
 	}()
 
-	// Connect to daemon with retry on transient failures
-	fmt.Fprintf(os.Stderr, "Connecting to %s...\n", cfg.Host)
-	c, err := client.ConnectWithRetry(ctx, client.Config{
-		Host:            cfg.Host,
-		Port:            cfg.Port,
-		User:            cfg.User,
-		KeyPath:         cfg.Key,
-		Password:        cfg.Password,
-		InsecureHostKey: insecureKey,
-	})
+	c, hostLabel, err := connectDaemon(ctx)
 	if err != nil {
-		return fmt.Errorf("connect: %w", err)
+		return err
 	}
 	defer c.Close()
 
 	// Find session (resolve short ID)
-	fullSessionID, err := resolveSession(ctx, c, sessionID)
+	fullSessionID, err := resolveSession(ctx, c, sessionID, hostLabel)
 	if err != nil {
 		return fmt.Errorf("find session: %w", err)
 	}
 
 	fmt.Fprintf(os.Stderr, "Attaching to session %s...\n", shortID(fullSessionID))
 
-	return attachToSession(ctx, cancel, c, fullSessionID, cfg.Host)
+	return attachToSession(ctx, cancel, c, fullSessionID, hostLabel)
 }

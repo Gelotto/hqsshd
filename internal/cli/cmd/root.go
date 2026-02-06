@@ -17,6 +17,7 @@ var (
 	keyPath     string
 	password    string
 	insecureKey bool
+	socket      string
 )
 
 var rootCmd = &cobra.Command{
@@ -24,21 +25,20 @@ var rootCmd = &cobra.Command{
 	Short: "HQSSH - Mobile-first SSH with AI session management",
 	Long: `HQSSH CLI - Attach to AI sessions started from your mobile device.
 
-QUICK START:
-  # List sessions on a host
+LOCAL DAEMON (zero-config):
+  If hqsshd is running locally, just run commands directly:
+
+  hqssh sessions                     # Auto-detects local daemon
+  hqssh attach abc12345              # Attach to a local session
+  hqssh new --tool claude            # Create a new session
+
+REMOTE HOST:
   hqssh sessions -H server.example.com
-
-  # Attach to a session
   hqssh attach abc12345 -H server.example.com
-
-  # Create new session
   hqssh new --tool claude -H server.example.com
 
-  # Kill a session
-  hqssh kill abc12345 -H server.example.com
-
-  # View system info
-  hqssh info -H server.example.com
+EXPLICIT SOCKET:
+  hqssh sessions -S /path/to/hqssh.sock
 
 CONFIG:
   Create ~/.hqssh/config.yaml to set defaults and avoid typing -H every time:
@@ -57,8 +57,8 @@ CONFIG:
     export HQSSH_USER=ubuntu
     hqssh sessions
 
-PRIORITY:
-  CLI flags > Environment variables > Config file > Defaults`,
+CONNECTION PRIORITY:
+  -S/--socket flag > -H/--host flag > config/env > local socket auto-detect`,
 }
 
 func init() {
@@ -69,6 +69,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&keyPath, "key", "k", "", "SSH private key path")
 	rootCmd.PersistentFlags().StringVarP(&password, "password", "p", "", "SSH password (not recommended)")
 	rootCmd.PersistentFlags().BoolVar(&insecureKey, "insecure", false, "Skip host key verification")
+	rootCmd.PersistentFlags().StringVarP(&socket, "socket", "S", "", "Unix socket path (local daemon)")
 
 	// Add subcommands
 	rootCmd.AddCommand(sessionsCmd)

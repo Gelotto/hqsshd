@@ -43,11 +43,6 @@ func init() {
 
 func runRunTask(cmd *cobra.Command, args []string) error {
 	taskID := args[0]
-	cfg := resolveConfig()
-
-	if cfg.Host == "" {
-		return fmt.Errorf("no host specified\n\nProvide a host using one of:\n  --host/-H flag:    hqssh run %s -H server.example.com\n  Environment var:   export HQSSH_HOST=server.example.com\n  Config file:       ~/.hqssh/config.yaml with default_host set", taskID)
-	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -62,23 +57,14 @@ func runRunTask(cmd *cobra.Command, args []string) error {
 		cancel()
 	}()
 
-	// Connect to daemon
-	fmt.Fprintf(os.Stderr, "Connecting to %s...\n", cfg.Host)
-	c, err := client.ConnectWithRetry(ctx, client.Config{
-		Host:            cfg.Host,
-		Port:            cfg.Port,
-		User:            cfg.User,
-		KeyPath:         cfg.Key,
-		Password:        cfg.Password,
-		InsecureHostKey: insecureKey,
-	})
+	c, hostLabel, err := connectDaemon(ctx)
 	if err != nil {
-		return fmt.Errorf("connect: %w", err)
+		return err
 	}
 	defer c.Close()
 
 	// Resolve task ID (try to find by prefix)
-	fullTaskID, err := resolveTaskID(ctx, c, taskID)
+	fullTaskID, err := resolveTaskID(ctx, c, taskID, hostLabel)
 	if err != nil {
 		return fmt.Errorf("find task: %w", err)
 	}
@@ -95,7 +81,7 @@ func runRunTask(cmd *cobra.Command, args []string) error {
 	if runAsync {
 		fmt.Printf("Task started. Run ID: %s\n", shortID(run.Id))
 		fmt.Printf("\nCheck status with:\n")
-		fmt.Printf("  hqssh runs --task %s -H %s\n", shortID(fullTaskID), cfg.Host)
+		fmt.Printf("  hqssh runs --task %s%s\n", shortID(fullTaskID), hostFlag(hostLabel))
 		return nil
 	}
 
@@ -174,7 +160,7 @@ func runRunTask(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func resolveTaskID(ctx context.Context, c *client.Client, idPrefix string) (string, error) {
+func resolveTaskID(ctx context.Context, c *client.Client, idPrefix, hostLabel string) (string, error) {
 	resp, err := c.TaskService.List(ctx, &pb.ListTasksRequest{})
 	if err != nil {
 		return "", err
@@ -188,7 +174,7 @@ func resolveTaskID(ctx context.Context, c *client.Client, idPrefix string) (stri
 	}
 
 	if len(matches) == 0 {
-		return "", fmt.Errorf("task not found: %s\n\nRun 'hqssh tasks' to list available tasks", idPrefix)
+		return "", fmt.Errorf("task not found: %s\n\nRun 'hqssh tasks%s' to list available tasks", idPrefix, hostFlag(hostLabel))
 	}
 	if len(matches) > 1 {
 		var msg string

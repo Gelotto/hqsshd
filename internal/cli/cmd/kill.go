@@ -37,32 +37,18 @@ func init() {
 
 func runKill(cmd *cobra.Command, args []string) error {
 	sessionID := args[0]
-	cfg := resolveConfig()
-
-	if cfg.Host == "" {
-		return fmt.Errorf("no host specified\n\nProvide a host using one of:\n  --host/-H flag:    hqssh kill %s -H server.example.com\n  Environment var:   export HQSSH_HOST=server.example.com\n  Config file:       ~/.hqssh/config.yaml with default_host set", sessionID)
-	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Connect to daemon
-	fmt.Fprintf(os.Stderr, "Connecting to %s...\n", cfg.Host)
-	c, err := client.ConnectWithRetry(ctx, client.Config{
-		Host:            cfg.Host,
-		Port:            cfg.Port,
-		User:            cfg.User,
-		KeyPath:         cfg.Key,
-		Password:        cfg.Password,
-		InsecureHostKey: insecureKey,
-	})
+	c, hostLabel, err := connectDaemon(ctx)
 	if err != nil {
-		return fmt.Errorf("connect: %w", err)
+		return err
 	}
 	defer c.Close()
 
 	// Resolve session ID and get session info
-	fullSessionID, session, err := resolveSessionWithInfo(ctx, c, sessionID)
+	fullSessionID, session, err := resolveSessionWithInfo(ctx, c, sessionID, hostLabel)
 	if err != nil {
 		return fmt.Errorf("find session: %w", err)
 	}
@@ -98,7 +84,7 @@ func runKill(cmd *cobra.Command, args []string) error {
 }
 
 // resolveSessionWithInfo finds a session by ID prefix and returns both the full ID and session info
-func resolveSessionWithInfo(ctx context.Context, c *client.Client, idPrefix string) (string, *pb.Session, error) {
+func resolveSessionWithInfo(ctx context.Context, c *client.Client, idPrefix, hostLabel string) (string, *pb.Session, error) {
 	resp, err := c.SessionService.List(ctx, &pb.ListSessionsRequest{IncludeEnded: false})
 	if err != nil {
 		return "", nil, err
@@ -112,7 +98,7 @@ func resolveSessionWithInfo(ctx context.Context, c *client.Client, idPrefix stri
 	}
 
 	if len(matches) == 0 {
-		return "", nil, fmt.Errorf("session not found: %s\n\nRun 'hqssh sessions' to list available sessions", idPrefix)
+		return "", nil, fmt.Errorf("session not found: %s\n\nRun 'hqssh sessions%s' to list available sessions", idPrefix, hostFlag(hostLabel))
 	}
 	if len(matches) > 1 {
 		var msg string

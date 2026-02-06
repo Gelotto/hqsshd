@@ -25,7 +25,10 @@ const (
 	initialBackoff    = 1 * time.Second
 )
 
-// Client connects to the daemon via SSH tunnel.
+// DefaultSocketPath is the default Unix socket path for the local daemon.
+const DefaultSocketPath = "/tmp/hqssh.sock"
+
+// Client connects to the daemon via SSH tunnel or local Unix socket.
 type Client struct {
 	sshClient *ssh.Client
 	grpcConn  *grpc.ClientConn
@@ -278,6 +281,26 @@ func (c *Client) Close() error {
 		c.sshClient.Close()
 	}
 	return nil
+}
+
+// ConnectLocal connects to the daemon via a Unix socket (no SSH tunnel).
+func ConnectLocal(ctx context.Context, socketPath string) (*Client, error) {
+	grpcConn, err := grpc.NewClient("unix:"+socketPath,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("gRPC connect to %s: %w", socketPath, err)
+	}
+
+	c := &Client{
+		grpcConn: grpcConn,
+	}
+	c.SessionService = pb.NewSessionServiceClient(grpcConn)
+	c.ProjectService = pb.NewProjectServiceClient(grpcConn)
+	c.SystemService = pb.NewSystemServiceClient(grpcConn)
+	c.TaskService = pb.NewTaskServiceClient(grpcConn)
+
+	return c, nil
 }
 
 func buildSSHConfig(cfg Config) (*ssh.ClientConfig, error) {

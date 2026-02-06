@@ -8,7 +8,6 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/gelotto/hqsshd/internal/cli/client"
 	pb "github.com/gelotto/hqsshd/proto"
 	"github.com/spf13/cobra"
 )
@@ -43,34 +42,19 @@ func init() {
 }
 
 func runRuns(cmd *cobra.Command, args []string) error {
-	cfg := resolveConfig()
-
-	if cfg.Host == "" {
-		return fmt.Errorf("no host specified\n\nProvide a host using one of:\n  --host/-H flag:    hqssh runs -H server.example.com\n  Environment var:   export HQSSH_HOST=server.example.com\n  Config file:       ~/.hqssh/config.yaml with default_host set")
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Connect to daemon
-	fmt.Fprintf(os.Stderr, "Connecting to %s...\n", cfg.Host)
-	c, err := client.ConnectWithRetry(ctx, client.Config{
-		Host:            cfg.Host,
-		Port:            cfg.Port,
-		User:            cfg.User,
-		KeyPath:         cfg.Key,
-		Password:        cfg.Password,
-		InsecureHostKey: insecureKey,
-	})
+	c, hostLabel, err := connectDaemon(ctx)
 	if err != nil {
-		return fmt.Errorf("connect: %w", err)
+		return err
 	}
 	defer c.Close()
 
 	// Resolve task ID if specified
 	taskFilter := runsTask
 	if taskFilter != "" {
-		fullTaskID, err := resolveTaskID(ctx, c, taskFilter)
+		fullTaskID, err := resolveTaskID(ctx, c, taskFilter, hostLabel)
 		if err != nil {
 			return fmt.Errorf("find task: %w", err)
 		}
@@ -115,7 +99,7 @@ func runRuns(cmd *cobra.Command, args []string) error {
 	if len(resp.Runs) == 0 {
 		fmt.Println("No task runs found.")
 		fmt.Println("\nRun a task with:")
-		fmt.Printf("  hqssh run <task-id> -H %s\n", cfg.Host)
+		fmt.Printf("  hqssh run <task-id>%s\n", hostFlag(hostLabel))
 		return nil
 	}
 

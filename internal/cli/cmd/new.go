@@ -7,7 +7,6 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/gelotto/hqsshd/internal/cli/client"
 	pb "github.com/gelotto/hqsshd/proto"
 	"github.com/spf13/cobra"
 )
@@ -42,12 +41,6 @@ func init() {
 }
 
 func runNew(cmd *cobra.Command, args []string) error {
-	cfg := resolveConfig()
-
-	if cfg.Host == "" {
-		return fmt.Errorf("no host specified\n\nProvide a host using one of:\n  --host/-H flag:    hqssh new -H server.example.com\n  Environment var:   export HQSSH_HOST=server.example.com\n  Config file:       ~/.hqssh/config.yaml with default_host set")
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -61,18 +54,9 @@ func runNew(cmd *cobra.Command, args []string) error {
 		cancel()
 	}()
 
-	// Connect to daemon
-	fmt.Fprintf(os.Stderr, "Connecting to %s...\n", cfg.Host)
-	c, err := client.ConnectWithRetry(ctx, client.Config{
-		Host:            cfg.Host,
-		Port:            cfg.Port,
-		User:            cfg.User,
-		KeyPath:         cfg.Key,
-		Password:        cfg.Password,
-		InsecureHostKey: insecureKey,
-	})
+	c, hostLabel, err := connectDaemon(ctx)
 	if err != nil {
-		return fmt.Errorf("connect: %w", err)
+		return err
 	}
 	defer c.Close()
 
@@ -100,12 +84,12 @@ func runNew(cmd *cobra.Command, args []string) error {
 
 	if newNoAttach {
 		fmt.Fprintf(os.Stderr, "\nTo attach later:\n")
-		fmt.Fprintf(os.Stderr, "  hqssh attach %s -H %s\n", shortID(session.Id), cfg.Host)
+		fmt.Fprintf(os.Stderr, "  hqssh attach %s%s\n", shortID(session.Id), hostFlag(hostLabel))
 		return nil
 	}
 
 	// Attach to the session (reuse shared attach logic)
 	fmt.Fprintf(os.Stderr, "Attaching to session %s...\n", shortID(session.Id))
 
-	return attachToSession(ctx, cancel, c, session.Id, cfg.Host)
+	return attachToSession(ctx, cancel, c, session.Id, hostLabel)
 }

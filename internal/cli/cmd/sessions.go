@@ -9,7 +9,6 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/gelotto/hqsshd/internal/cli/client"
 	pb "github.com/gelotto/hqsshd/proto"
 	"github.com/spf13/cobra"
 )
@@ -41,26 +40,12 @@ func init() {
 }
 
 func runSessions(cmd *cobra.Command, args []string) error {
-	cfg := resolveConfig()
-	if cfg.Host == "" {
-		return fmt.Errorf("no host specified\n\nProvide a host using one of:\n  --host/-H flag:    hqssh sessions -H server.example.com\n  Environment var:   export HQSSH_HOST=server.example.com\n  Config file:       ~/.hqssh/config.yaml with default_host set")
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Connect to daemon with retry on transient failures
-	fmt.Fprintf(os.Stderr, "Connecting to %s...\n", cfg.Host)
-	c, err := client.ConnectWithRetry(ctx, client.Config{
-		Host:            cfg.Host,
-		Port:            cfg.Port,
-		User:            cfg.User,
-		KeyPath:         cfg.Key,
-		Password:        cfg.Password,
-		InsecureHostKey: insecureKey,
-	})
+	c, hostLabel, err := connectDaemon(ctx)
 	if err != nil {
-		return fmt.Errorf("connect: %w", err)
+		return err
 	}
 	defer c.Close()
 
@@ -109,9 +94,9 @@ func runSessions(cmd *cobra.Command, args []string) error {
 	if len(sessions) == 0 {
 		fmt.Println("No active sessions.")
 		fmt.Println("\nTo create a new session:")
-		fmt.Printf("  hqssh new --tool claude -H %s\n", cfg.Host)
+		fmt.Printf("  hqssh new --tool claude%s\n", hostFlag(hostLabel))
 		fmt.Println("\nOr start from the HQSSH mobile app, then attach with:")
-		fmt.Printf("  hqssh attach <session-id> -H %s\n", cfg.Host)
+		fmt.Printf("  hqssh attach <session-id>%s\n", hostFlag(hostLabel))
 		return nil
 	}
 
@@ -143,7 +128,7 @@ func runSessions(cmd *cobra.Command, args []string) error {
 	w.Flush()
 
 	fmt.Println("\nTo attach to a session:")
-	fmt.Printf("  hqssh attach <ID> -H %s\n", cfg.Host)
+	fmt.Printf("  hqssh attach <ID>%s\n", hostFlag(hostLabel))
 
 	return nil
 }

@@ -7,7 +7,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/gelotto/hqsshd/internal/cli/client"
 	pb "github.com/gelotto/hqsshd/proto"
 	"github.com/spf13/cobra"
 )
@@ -33,32 +32,18 @@ func init() {
 
 func runLogs(cmd *cobra.Command, args []string) error {
 	sessionID := args[0]
-	cfg := resolveConfig()
-
-	if cfg.Host == "" {
-		return fmt.Errorf("no host specified\n\nProvide a host using one of:\n  --host/-H flag:    hqssh logs %s -H server.example.com\n  Environment var:   export HQSSH_HOST=server.example.com\n  Config file:       ~/.hqssh/config.yaml with default_host set", sessionID)
-	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Connect to daemon
-	fmt.Fprintf(os.Stderr, "Connecting to %s...\n", cfg.Host)
-	c, err := client.ConnectWithRetry(ctx, client.Config{
-		Host:            cfg.Host,
-		Port:            cfg.Port,
-		User:            cfg.User,
-		KeyPath:         cfg.Key,
-		Password:        cfg.Password,
-		InsecureHostKey: insecureKey,
-	})
+	c, hostLabel, err := connectDaemon(ctx)
 	if err != nil {
-		return fmt.Errorf("connect: %w", err)
+		return err
 	}
 	defer c.Close()
 
 	// Resolve session ID (include ended sessions for logs)
-	fullSessionID, err := resolveSessionIncludeEnded(ctx, c, sessionID)
+	fullSessionID, err := resolveSessionIncludeEnded(ctx, c, sessionID, hostLabel)
 	if err != nil {
 		return fmt.Errorf("find session: %w", err)
 	}
