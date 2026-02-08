@@ -35,6 +35,37 @@ hqsshd provides session persistence and multi-client access for AI coding assist
 
 ## Installation
 
+### Prebuilt Binaries
+
+Download the latest release for your platform from [GitHub Releases](https://github.com/gelotto/hqsshd/releases/latest):
+
+```bash
+# Linux (amd64)
+curl -LO https://github.com/gelotto/hqsshd/releases/latest/download/hqsshd-linux-amd64.tar.gz
+tar xzf hqsshd-linux-amd64.tar.gz
+sudo mv hqsshd hqssh /usr/local/bin/
+
+# Linux (arm64)
+curl -LO https://github.com/gelotto/hqsshd/releases/latest/download/hqsshd-linux-arm64.tar.gz
+tar xzf hqsshd-linux-arm64.tar.gz
+sudo mv hqsshd hqssh /usr/local/bin/
+
+# macOS (Apple Silicon)
+curl -LO https://github.com/gelotto/hqsshd/releases/latest/download/hqsshd-darwin-arm64.tar.gz
+tar xzf hqsshd-darwin-arm64.tar.gz
+sudo mv hqsshd hqssh /usr/local/bin/
+
+# macOS (Intel)
+curl -LO https://github.com/gelotto/hqsshd/releases/latest/download/hqsshd-darwin-amd64.tar.gz
+tar xzf hqsshd-darwin-amd64.tar.gz
+sudo mv hqsshd hqssh /usr/local/bin/
+```
+
+Verify:
+```bash
+hqsshd --version
+```
+
 ### From Source
 
 Requires Go 1.24+:

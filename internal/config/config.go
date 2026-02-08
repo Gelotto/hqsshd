@@ -12,8 +12,13 @@ const (
 	DefaultTCPPort    = 50051 // Default gRPC port, bound to localhost only
 	DefaultConfigDir  = ".hqssh"
 	DefaultConfigFile = "daemon.yaml"
-	DaemonVersion     = "0.1.0"
 )
+
+// DaemonVersion is the version of the daemon. Overridden by ldflags at build time.
+var DaemonVersion = "0.1.0-dev"
+
+// Commit is the git commit SHA. Overridden by ldflags at build time.
+var Commit = "unknown"
 
 // Config represents the daemon configuration
 type Config struct {

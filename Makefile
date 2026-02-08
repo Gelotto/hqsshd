@@ -14,16 +14,21 @@ CLI_BINARY=hqssh
 # Build directory
 BUILD_DIR=bin
 
+# Version injection
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+LDFLAGS=-ldflags "-X github.com/gelotto/hqsshd/internal/config.DaemonVersion=$(VERSION) -X github.com/gelotto/hqsshd/internal/config.Commit=$(COMMIT)"
+
 # Build both binaries
 build: $(BUILD_DIR)/$(DAEMON_BINARY) $(BUILD_DIR)/$(CLI_BINARY)
 
 $(BUILD_DIR)/$(DAEMON_BINARY):
 	@mkdir -p $(BUILD_DIR)
-	$(GOBUILD) -o $(BUILD_DIR)/$(DAEMON_BINARY) ./cmd/hqsshd
+	$(GOBUILD) -trimpath $(LDFLAGS) -o $(BUILD_DIR)/$(DAEMON_BINARY) ./cmd/hqsshd
 
 $(BUILD_DIR)/$(CLI_BINARY):
 	@mkdir -p $(BUILD_DIR)
-	$(GOBUILD) -o $(BUILD_DIR)/$(CLI_BINARY) ./cmd/hqssh
+	$(GOBUILD) -trimpath $(LDFLAGS) -o $(BUILD_DIR)/$(CLI_BINARY) ./cmd/hqssh
 
 # Generate protobuf code
 proto:
