@@ -12,8 +12,7 @@ import (
 )
 
 const (
-	runsFile       = "task_runs.json"
-	maxRunsPerTask = 10 // Keep last 10 runs per task
+	runsFile = "task_runs.json"
 )
 
 // RunStatus represents the status of a task run
@@ -42,18 +41,24 @@ type Run struct {
 
 // RunStore manages task run history
 type RunStore struct {
-	runs    map[string]*Run   // All runs by ID
-	byTask  map[string][]*Run // Runs indexed by task ID
-	mu      sync.RWMutex
-	dataDir string
+	runs           map[string]*Run   // All runs by ID
+	byTask         map[string][]*Run // Runs indexed by task ID
+	mu             sync.RWMutex
+	dataDir        string
+	maxRunsPerTask int // Max retained runs per task
 }
 
-// NewRunStore creates a new run store
-func NewRunStore(dataDir string) *RunStore {
+// NewRunStore creates a new run store.
+// maxRunsPerTask limits retained runs per task (0 = default 10).
+func NewRunStore(dataDir string, maxRunsPerTask int) *RunStore {
+	if maxRunsPerTask <= 0 {
+		maxRunsPerTask = 10
+	}
 	return &RunStore{
-		runs:    make(map[string]*Run),
-		byTask:  make(map[string][]*Run),
-		dataDir: dataDir,
+		runs:           make(map[string]*Run),
+		byTask:         make(map[string][]*Run),
+		dataDir:        dataDir,
+		maxRunsPerTask: maxRunsPerTask,
 	}
 }
 
@@ -321,13 +326,13 @@ func (s *RunStore) sortRuns(taskID string) {
 // pruneRuns removes old runs beyond maxRunsPerTask
 func (s *RunStore) pruneRuns(taskID string) {
 	runs := s.byTask[taskID]
-	if len(runs) <= maxRunsPerTask {
+	if len(runs) <= s.maxRunsPerTask {
 		return
 	}
 
 	// Keep only the most recent runs
-	toRemove := runs[maxRunsPerTask:]
-	s.byTask[taskID] = runs[:maxRunsPerTask]
+	toRemove := runs[s.maxRunsPerTask:]
+	s.byTask[taskID] = runs[:s.maxRunsPerTask]
 
 	for _, r := range toRemove {
 		delete(s.runs, r.ID)

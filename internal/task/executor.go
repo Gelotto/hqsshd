@@ -14,15 +14,15 @@ import (
 )
 
 const (
-	maxOutputSize = 1024 * 1024 // 1MB max output
-	defaultCols   = 120
-	defaultRows   = 40
+	defaultCols = 120
+	defaultRows = 40
 )
 
 // Executor runs tasks and manages their lifecycle
 type Executor struct {
-	taskStore *Store
-	runStore  *RunStore
+	taskStore     *Store
+	runStore      *RunStore
+	maxOutputSize int64 // max task output in bytes
 
 	// Track running tasks for cancellation
 	running   map[string]*runningTask
@@ -34,12 +34,17 @@ type runningTask struct {
 	cmd    *exec.Cmd
 }
 
-// NewExecutor creates a new task executor
-func NewExecutor(taskStore *Store, runStore *RunStore) *Executor {
+// NewExecutor creates a new task executor.
+// maxOutputSize limits captured task output in bytes (0 = default 1MB).
+func NewExecutor(taskStore *Store, runStore *RunStore, maxOutputSize int) *Executor {
+	if maxOutputSize <= 0 {
+		maxOutputSize = 1024 * 1024 // 1MB default
+	}
 	return &Executor{
-		taskStore: taskStore,
-		runStore:  runStore,
-		running:   make(map[string]*runningTask),
+		taskStore:     taskStore,
+		runStore:      runStore,
+		maxOutputSize: int64(maxOutputSize),
+		running:       make(map[string]*runningTask),
 	}
 }
 
@@ -192,14 +197,14 @@ func (e *Executor) executeTask(task *Task, run *Run, projectPath string) {
 	go func() {
 		defer close(outputDone)
 		// Read output with size limit
-		limitedReader := io.LimitReader(ptmx, maxOutputSize)
+		limitedReader := io.LimitReader(ptmx, e.maxOutputSize)
 		n, err := io.Copy(&outputBuf, limitedReader)
 		if err != nil {
 			fmt.Printf("Warning: error reading task output: %v\n", err)
 		}
 		// If we hit the size limit, notify the user
-		if n >= maxOutputSize {
-			outputBuf.WriteString("\n[Output truncated at 1MB]")
+		if n >= e.maxOutputSize {
+			outputBuf.WriteString(fmt.Sprintf("\n[Output truncated at %dMB]", e.maxOutputSize/(1024*1024)))
 		}
 	}()
 

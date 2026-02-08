@@ -7,7 +7,7 @@ import (
 )
 
 func TestNewSession(t *testing.T) {
-	sess := NewSession("proj-1", "claude", "/home/user/project", []string{"--print"}, 80, 24, 1024)
+	sess := NewSession("proj-1", "claude", "/home/user/project", "", []string{"--print"}, 80, 24, 1024)
 
 	if sess.ID == "" {
 		t.Error("ID should not be empty")
@@ -33,7 +33,7 @@ func TestNewSession(t *testing.T) {
 }
 
 func TestSession_StatusStartsIdle(t *testing.T) {
-	sess := NewSession("proj-1", "shell", "/tmp", nil, 80, 24, 1024)
+	sess := NewSession("proj-1", "shell", "/tmp", "", nil, 80, 24, 1024)
 
 	if sess.Status() != StatusIdle {
 		t.Errorf("Status() = %v, want %v", sess.Status(), StatusIdle)
@@ -41,7 +41,7 @@ func TestSession_StatusStartsIdle(t *testing.T) {
 }
 
 func TestSession_AddClientChangesStatusToRunning(t *testing.T) {
-	sess := NewSession("proj-1", "shell", "/tmp", nil, 80, 24, 1024)
+	sess := NewSession("proj-1", "shell", "/tmp", "", nil, 80, 24, 1024)
 
 	// Status should be Idle initially
 	if sess.Status() != StatusIdle {
@@ -49,7 +49,7 @@ func TestSession_AddClientChangesStatusToRunning(t *testing.T) {
 	}
 
 	// Add a client
-	ch := sess.AddClient("client-1")
+	ch := sess.AddClient("client-1", 0)
 	if ch == nil {
 		t.Error("AddClient returned nil channel")
 	}
@@ -61,10 +61,10 @@ func TestSession_AddClientChangesStatusToRunning(t *testing.T) {
 }
 
 func TestSession_RemoveClientChangesStatusToIdle(t *testing.T) {
-	sess := NewSession("proj-1", "shell", "/tmp", nil, 80, 24, 1024)
+	sess := NewSession("proj-1", "shell", "/tmp", "", nil, 80, 24, 1024)
 
 	// Add and remove client
-	sess.AddClient("client-1")
+	sess.AddClient("client-1", 0)
 	sess.RemoveClient("client-1")
 
 	// Status should be back to Idle
@@ -74,12 +74,12 @@ func TestSession_RemoveClientChangesStatusToIdle(t *testing.T) {
 }
 
 func TestSession_MultipleClients(t *testing.T) {
-	sess := NewSession("proj-1", "shell", "/tmp", nil, 80, 24, 1024)
+	sess := NewSession("proj-1", "shell", "/tmp", "", nil, 80, 24, 1024)
 
 	// Add multiple clients
-	sess.AddClient("client-1")
-	sess.AddClient("client-2")
-	sess.AddClient("client-3")
+	sess.AddClient("client-1", 0)
+	sess.AddClient("client-2", 0)
+	sess.AddClient("client-3", 0)
 
 	if sess.ClientCount() != 3 {
 		t.Errorf("ClientCount() = %d, want 3", sess.ClientCount())
@@ -104,7 +104,7 @@ func TestSession_MultipleClients(t *testing.T) {
 }
 
 func TestSession_RemoveNonexistentClient(t *testing.T) {
-	sess := NewSession("proj-1", "shell", "/tmp", nil, 80, 24, 1024)
+	sess := NewSession("proj-1", "shell", "/tmp", "", nil, 80, 24, 1024)
 
 	// Should not panic
 	sess.RemoveClient("nonexistent")
@@ -115,7 +115,7 @@ func TestSession_RemoveNonexistentClient(t *testing.T) {
 }
 
 func TestSession_GetScrollback(t *testing.T) {
-	sess := NewSession("proj-1", "shell", "/tmp", nil, 80, 24, 1024)
+	sess := NewSession("proj-1", "shell", "/tmp", "", nil, 80, 24, 1024)
 
 	// Initially empty
 	scrollback := sess.GetScrollback()
@@ -134,7 +134,7 @@ func TestSession_GetScrollback(t *testing.T) {
 }
 
 func TestSession_GetScrollback_ReturnsCopy(t *testing.T) {
-	sess := NewSession("proj-1", "shell", "/tmp", nil, 80, 24, 1024)
+	sess := NewSession("proj-1", "shell", "/tmp", "", nil, 80, 24, 1024)
 
 	sess.appendToBuffer([]byte("original"))
 
@@ -151,7 +151,7 @@ func TestSession_GetScrollback_ReturnsCopy(t *testing.T) {
 
 func TestSession_AppendToBuffer_TrimsWhenOverMax(t *testing.T) {
 	// Create session with 10 byte max buffer
-	sess := NewSession("proj-1", "shell", "/tmp", nil, 80, 24, 10)
+	sess := NewSession("proj-1", "shell", "/tmp", "", nil, 80, 24, 10)
 
 	// Add 15 bytes
 	sess.appendToBuffer([]byte("12345"))
@@ -169,7 +169,7 @@ func TestSession_AppendToBuffer_TrimsWhenOverMax(t *testing.T) {
 }
 
 func TestSession_IsDone(t *testing.T) {
-	sess := NewSession("proj-1", "shell", "/tmp", nil, 80, 24, 1024)
+	sess := NewSession("proj-1", "shell", "/tmp", "", nil, 80, 24, 1024)
 
 	if sess.IsDone() {
 		t.Error("IsDone() should be false initially")
@@ -183,7 +183,7 @@ func TestSession_IsDone(t *testing.T) {
 }
 
 func TestSession_Done_ChannelCloses(t *testing.T) {
-	sess := NewSession("proj-1", "shell", "/tmp", nil, 80, 24, 1024)
+	sess := NewSession("proj-1", "shell", "/tmp", "", nil, 80, 24, 1024)
 
 	doneCh := sess.Done()
 
@@ -207,7 +207,7 @@ func TestSession_Done_ChannelCloses(t *testing.T) {
 }
 
 func TestSession_MarkDone_Idempotent(t *testing.T) {
-	sess := NewSession("proj-1", "shell", "/tmp", nil, 80, 24, 1024)
+	sess := NewSession("proj-1", "shell", "/tmp", "", nil, 80, 24, 1024)
 
 	// Call multiple times - should not panic
 	sess.markDone()
@@ -220,7 +220,7 @@ func TestSession_MarkDone_Idempotent(t *testing.T) {
 }
 
 func TestSession_UpdateActivity(t *testing.T) {
-	sess := NewSession("proj-1", "shell", "/tmp", nil, 80, 24, 1024)
+	sess := NewSession("proj-1", "shell", "/tmp", "", nil, 80, 24, 1024)
 
 	initial := sess.LastActivity()
 	time.Sleep(10 * time.Millisecond)
@@ -233,7 +233,7 @@ func TestSession_UpdateActivity(t *testing.T) {
 }
 
 func TestSession_GetDimensions(t *testing.T) {
-	sess := NewSession("proj-1", "shell", "/tmp", nil, 120, 40, 1024)
+	sess := NewSession("proj-1", "shell", "/tmp", "", nil, 120, 40, 1024)
 
 	cols, rows := sess.GetDimensions()
 	if cols != 120 {
@@ -245,7 +245,7 @@ func TestSession_GetDimensions(t *testing.T) {
 }
 
 func TestSession_Info(t *testing.T) {
-	sess := NewSession("proj-1", "claude", "/home/user", []string{"--print"}, 80, 24, 1024)
+	sess := NewSession("proj-1", "claude", "/home/user", "", []string{"--print"}, 80, 24, 1024)
 
 	info := sess.Info()
 
@@ -296,10 +296,10 @@ func TestSession_StatusString(t *testing.T) {
 }
 
 func TestSession_BroadcastAfterDone(t *testing.T) {
-	sess := NewSession("proj-1", "shell", "/tmp", nil, 80, 24, 1024)
+	sess := NewSession("proj-1", "shell", "/tmp", "", nil, 80, 24, 1024)
 
 	// Add client
-	ch := sess.AddClient("client-1")
+	ch := sess.AddClient("client-1", 0)
 
 	// Mark session as done
 	sess.markDone()
@@ -317,7 +317,7 @@ func TestSession_BroadcastAfterDone(t *testing.T) {
 }
 
 func TestSession_ConcurrentAccess(t *testing.T) {
-	sess := NewSession("proj-1", "shell", "/tmp", nil, 80, 24, 1024)
+	sess := NewSession("proj-1", "shell", "/tmp", "", nil, 80, 24, 1024)
 
 	var wg sync.WaitGroup
 
@@ -327,7 +327,7 @@ func TestSession_ConcurrentAccess(t *testing.T) {
 		go func(id int) {
 			defer wg.Done()
 			clientID := string(rune('A' + id))
-			sess.AddClient(clientID)
+			sess.AddClient(clientID, 0)
 			sess.ClientCount()
 			sess.Status()
 			sess.RemoveClient(clientID)

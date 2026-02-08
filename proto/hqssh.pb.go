@@ -829,6 +829,7 @@ type Session struct {
 	EndedAt          int64                  `protobuf:"varint,9,opt,name=ended_at,json=endedAt,proto3" json:"ended_at,omitempty"`                   // Unix timestamp (0 if still active)
 	LogPath          string                 `protobuf:"bytes,10,opt,name=log_path,json=logPath,proto3" json:"log_path,omitempty"`                   // Path to session log file
 	LogSizeBytes     int64                  `protobuf:"varint,11,opt,name=log_size_bytes,json=logSizeBytes,proto3" json:"log_size_bytes,omitempty"` // Size of log file in bytes
+	Name             string                 `protobuf:"bytes,12,opt,name=name,proto3" json:"name,omitempty"`                                        // Human-readable session name (auto-generated or explicit)
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -940,6 +941,13 @@ func (x *Session) GetLogSizeBytes() int64 {
 	return 0
 }
 
+func (x *Session) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
 type CreateSessionRequest struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	ProjectId        string                 `protobuf:"bytes,1,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`                      // Optional - if set, uses project directory
@@ -948,6 +956,7 @@ type CreateSessionRequest struct {
 	Args             []string               `protobuf:"bytes,4,rep,name=args,proto3" json:"args,omitempty"`                                                 // Additional tool arguments
 	Cols             int32                  `protobuf:"varint,5,opt,name=cols,proto3" json:"cols,omitempty"`                                                // Terminal columns
 	Rows             int32                  `protobuf:"varint,6,opt,name=rows,proto3" json:"rows,omitempty"`                                                // Terminal rows
+	Name             string                 `protobuf:"bytes,7,opt,name=name,proto3" json:"name,omitempty"`                                                 // Optional explicit session name
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -1022,6 +1031,13 @@ func (x *CreateSessionRequest) GetRows() int32 {
 		return x.Rows
 	}
 	return 0
+}
+
+func (x *CreateSessionRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
 }
 
 type ListSessionsRequest struct {
@@ -2631,7 +2647,7 @@ const file_proto_hqssh_proto_rawDesc = "" +
 	"\n" +
 	"project_id\x18\x01 \x01(\tR\tprojectId\"(\n" +
 	"\x10GetToolsResponse\x12\x14\n" +
-	"\x05tools\x18\x01 \x03(\tR\x05tools\"\xea\x02\n" +
+	"\x05tools\x18\x01 \x03(\tR\x05tools\"\xfe\x02\n" +
 	"\aSession\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
 	"\n" +
@@ -2646,7 +2662,8 @@ const file_proto_hqssh_proto_rawDesc = "" +
 	"\bended_at\x18\t \x01(\x03R\aendedAt\x12\x19\n" +
 	"\blog_path\x18\n" +
 	" \x01(\tR\alogPath\x12$\n" +
-	"\x0elog_size_bytes\x18\v \x01(\x03R\flogSizeBytes\"\xb2\x01\n" +
+	"\x0elog_size_bytes\x18\v \x01(\x03R\flogSizeBytes\x12\x12\n" +
+	"\x04name\x18\f \x01(\tR\x04name\"\xc6\x01\n" +
 	"\x14CreateSessionRequest\x12\x1d\n" +
 	"\n" +
 	"project_id\x18\x01 \x01(\tR\tprojectId\x12\x12\n" +
@@ -2654,7 +2671,8 @@ const file_proto_hqssh_proto_rawDesc = "" +
 	"\x11working_directory\x18\x03 \x01(\tR\x10workingDirectory\x12\x12\n" +
 	"\x04args\x18\x04 \x03(\tR\x04args\x12\x12\n" +
 	"\x04cols\x18\x05 \x01(\x05R\x04cols\x12\x12\n" +
-	"\x04rows\x18\x06 \x01(\x05R\x04rows\"Y\n" +
+	"\x04rows\x18\x06 \x01(\x05R\x04rows\x12\x12\n" +
+	"\x04name\x18\a \x01(\tR\x04name\"Y\n" +
 	"\x13ListSessionsRequest\x12\x1d\n" +
 	"\n" +
 	"project_id\x18\x01 \x01(\tR\tprojectId\x12#\n" +

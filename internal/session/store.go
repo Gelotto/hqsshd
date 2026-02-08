@@ -310,6 +310,7 @@ func CreateRecord(sess *Session, logDir string) *SessionRecord {
 
 	return &SessionRecord{
 		ID:               sess.ID,
+		Name:             sess.Name,
 		ProjectID:        sess.ProjectID,
 		Tool:             sess.Tool,
 		WorkingDirectory: sess.WorkingDirectory,

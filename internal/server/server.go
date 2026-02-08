@@ -67,6 +67,8 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		dataDir,
 		cfg.Sessions.LogDirectory,
 		cfg.Sessions.LogRetentionDays,
+		cfg.Sessions.ClientBufferSize,
+		cfg.Sessions.MaxScrollbackSize,
 	)
 
 	// Create task store and run store
@@ -75,13 +77,13 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		fmt.Printf("Warning: failed to load task store: %v\n", err)
 	}
 
-	taskRunStore := task.NewRunStore(dataDir)
+	taskRunStore := task.NewRunStore(dataDir, cfg.Tasks.MaxRunsPerTask)
 	if err := taskRunStore.Load(); err != nil {
 		fmt.Printf("Warning: failed to load task run store: %v\n", err)
 	}
 
 	// Create task executor
-	taskExecutor := task.NewExecutor(taskStore, taskRunStore)
+	taskExecutor := task.NewExecutor(taskStore, taskRunStore, cfg.Tasks.MaxOutputSize)
 
 	return &Server{
 		config:         cfg,
@@ -118,13 +120,15 @@ func (s *Server) Start() error {
 	}
 
 	// Create TCP listener if port is configured (for SSH tunnel forwarding)
+	// If TCP port fails to bind, log a warning but continue with Unix socket only.
 	var tcpListener net.Listener
 	if s.config.TCPPort > 0 {
 		tcpAddr := fmt.Sprintf("127.0.0.1:%d", s.config.TCPPort)
 		tcpListener, err = net.Listen("tcp", tcpAddr)
 		if err != nil {
-			unixListener.Close()
-			return fmt.Errorf("failed to listen on TCP port: %w", err)
+			fmt.Printf("Warning: TCP port %d unavailable (%v), continuing with Unix socket only\n", s.config.TCPPort, err)
+			fmt.Printf("  Remote clients (mobile app, SSH tunnels) will not be able to connect.\n")
+			fmt.Printf("  Local CLI will still work via Unix socket.\n")
 		}
 	}
 
@@ -416,11 +420,12 @@ func (s *sessionService) Create(ctx context.Context, req *pb.CreateSessionReques
 		rows = 24
 	}
 
-	// Get optional tool arguments
+	// Get optional tool arguments and name
 	args := req.GetArgs()
+	name := req.GetName()
 
 	// Create session
-	sess, err := s.server.sessionManager.Create(projectID, tool, workingDir, args, cols, rows)
+	sess, err := s.server.sessionManager.Create(projectID, tool, workingDir, name, args, cols, rows)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to create session: %v", err)
 	}
@@ -679,6 +684,7 @@ func (s *sessionService) ListHistoricalSessions(ctx context.Context, req *pb.Lis
 
 		pbSessions[i] = &pb.Session{
 			Id:               r.ID,
+			Name:             r.Name,
 			ProjectId:        r.ProjectID,
 			Tool:             r.Tool,
 			WorkingDirectory: r.WorkingDirectory,
@@ -1009,6 +1015,7 @@ func sessionToProto(s *session.Session) *pb.Session {
 
 	return &pb.Session{
 		Id:               s.ID,
+		Name:             s.Name,
 		ProjectId:        s.ProjectID,
 		Tool:             s.Tool,
 		WorkingDirectory: s.WorkingDirectory,

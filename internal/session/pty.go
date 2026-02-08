@@ -297,8 +297,8 @@ func (s *Session) Close() error {
 		// Close all client channels (safe now that broadcast stopped)
 		s.clientsMu.Lock()
 		clientCount := len(s.clients)
-		for id, ch := range s.clients {
-			close(ch)
+		for id, cs := range s.clients {
+			close(cs.ch)
 			delete(s.clients, id)
 		}
 		s.clientsMu.Unlock()

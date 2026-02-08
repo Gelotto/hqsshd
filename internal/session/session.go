@@ -4,6 +4,7 @@ package session
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -34,9 +35,17 @@ func (s Status) String() string {
 	}
 }
 
+// clientState tracks a connected client's output channel and drop statistics
+type clientState struct {
+	ch            chan []byte
+	dropCount     int64
+	lastDropTime  time.Time
+}
+
 // Session represents a persistent PTY session running an AI tool
 type Session struct {
 	ID               string
+	Name             string   // Human-readable name (e.g., "myapp/claude-a1b2")
 	ProjectID        string
 	Tool             string   // 'claude', 'codex', 'aider', 'shell'
 	Args             []string // Additional arguments for the tool
@@ -59,7 +68,7 @@ type Session struct {
 	ptySizeMu sync.Mutex
 
 	// Client management
-	clients   map[string]chan []byte // clientID -> output channel
+	clients   map[string]*clientState // clientID -> client state
 	clientsMu sync.RWMutex
 
 	// Output buffer for scrollback (clients get history on attach)
@@ -77,14 +86,30 @@ type Session struct {
 	readDone  chan struct{} // Signals readPTYOutput goroutine has exited
 }
 
-// NewSession creates a new session with the given parameters
-func NewSession(projectID, tool, workingDir string, args []string, cols, rows, maxBufferSize int) *Session {
+// NewSession creates a new session with the given parameters.
+// If name is empty, auto-generates from working directory, tool, and short ID.
+func NewSession(projectID, tool, workingDir, name string, args []string, cols, rows, maxBufferSize int) *Session {
 	if maxBufferSize <= 0 {
 		maxBufferSize = 1024 * 1024 // 1MB default
 	}
 	now := time.Now()
+	id := uuid.New().String()
+
+	// Auto-generate name if not provided
+	if name == "" {
+		shortID := id[:4]
+		if workingDir != "" {
+			// Use last path component as repo name
+			dirName := filepath.Base(workingDir)
+			name = dirName + "/" + tool + "-" + shortID
+		} else {
+			name = tool + "-" + shortID
+		}
+	}
+
 	sess := &Session{
-		ID:               uuid.New().String(),
+		ID:               id,
+		Name:             name,
 		ProjectID:        projectID,
 		Tool:             tool,
 		Args:             args,
@@ -94,7 +119,7 @@ func NewSession(projectID, tool, workingDir string, args []string, cols, rows, m
 		lastActivity:     now,
 		Cols:             cols,
 		Rows:             rows,
-		clients:          make(map[string]chan []byte),
+		clients:          make(map[string]*clientState),
 		outputBuffer:     make([]byte, 0, 64*1024), // 64KB initial capacity
 		maxBufferSize:    maxBufferSize,
 		done:             make(chan struct{}),
@@ -103,6 +128,7 @@ func NewSession(projectID, tool, workingDir string, args []string, cols, rows, m
 
 	logging.Info("session created",
 		"session_id", sess.ID,
+		"name", name,
 		"project_id", projectID,
 		"tool", tool,
 		"working_dir", workingDir,
@@ -192,17 +218,23 @@ func (s *Session) markDone() {
 	})
 }
 
-// AddClient adds a new client and returns its output channel
-func (s *Session) AddClient(clientID string) <-chan []byte {
+// AddClient adds a new client and returns its output channel.
+// bufferSize controls the output channel capacity.
+func (s *Session) AddClient(clientID string, bufferSize int) <-chan []byte {
+	if bufferSize <= 0 {
+		bufferSize = 256
+	}
 	// Create buffered channel for output
-	ch := make(chan []byte, 256)
+	cs := &clientState{
+		ch: make(chan []byte, bufferSize),
+	}
 
 	// Track if we need to update status (avoid nested locks)
 	var shouldUpdateStatus bool
 	var clientCount int
 
 	s.clientsMu.Lock()
-	s.clients[clientID] = ch
+	s.clients[clientID] = cs
 	clientCount = len(s.clients)
 	shouldUpdateStatus = clientCount == 1
 	s.clientsMu.Unlock()
@@ -232,7 +264,7 @@ func (s *Session) AddClient(clientID string) <-chan []byte {
 		"client_count", clientCount,
 	)
 
-	return ch
+	return cs.ch
 }
 
 // RemoveClient removes a client from the session
@@ -242,10 +274,13 @@ func (s *Session) RemoveClient(clientID string) {
 	var clientCount int
 	var found bool
 
+	var dropCount int64
+
 	s.clientsMu.Lock()
-	if ch, ok := s.clients[clientID]; ok {
+	if cs, ok := s.clients[clientID]; ok {
 		found = true
-		close(ch)
+		dropCount = cs.dropCount
+		close(cs.ch)
 		delete(s.clients, clientID)
 	}
 	clientCount = len(s.clients)
@@ -253,11 +288,17 @@ func (s *Session) RemoveClient(clientID string) {
 	s.clientsMu.Unlock()
 
 	if found {
-		logging.Debug("client detached",
+		logFn := logging.Debug
+		logArgs := []any{
 			"session_id", s.ID,
 			"client_id", clientID,
 			"client_count", clientCount,
-		)
+		}
+		if dropCount > 0 {
+			logFn = logging.Warn
+			logArgs = append(logArgs, "total_drops", dropCount)
+		}
+		logFn("client detached", logArgs...)
 	}
 
 	// Update status AFTER releasing clientsMu (prevents deadlock)
@@ -315,15 +356,25 @@ func (s *Session) broadcast(data []byte) {
 	s.clientsMu.RLock()
 	defer s.clientsMu.RUnlock()
 
-	for _, ch := range s.clients {
+	for clientID, cs := range s.clients {
 		// Non-blocking send - drop if channel is full.
 		// Recover from panic in case channel was closed between
 		// the IsDone() check above and this send (narrow race with Close()).
 		func() {
 			defer func() { recover() }()
 			select {
-			case ch <- data:
+			case cs.ch <- data:
 			default:
+				cs.dropCount++
+				cs.lastDropTime = time.Now()
+				// Log warning at powers of 100 (100, 1000, 10000, ...)
+				if cs.dropCount == 100 || (cs.dropCount > 0 && cs.dropCount%1000 == 0) {
+					logging.Warn("client output drops",
+						"session_id", s.ID,
+						"client_id", clientID,
+						"total_drops", cs.dropCount,
+					)
+				}
 			}
 		}()
 	}
@@ -332,6 +383,7 @@ func (s *Session) broadcast(data []byte) {
 // SessionInfo is a serializable snapshot of session state (for persistence/API)
 type SessionInfo struct {
 	ID               string    `json:"id"`
+	Name             string    `json:"name"`
 	ProjectID        string    `json:"project_id"`
 	Tool             string    `json:"tool"`
 	WorkingDirectory string    `json:"working_directory"`
@@ -348,6 +400,7 @@ func (s *Session) Info() SessionInfo {
 	cols, rows := s.GetDimensions()
 	return SessionInfo{
 		ID:               s.ID,
+		Name:             s.Name,
 		ProjectID:        s.ProjectID,
 		Tool:             s.Tool,
 		WorkingDirectory: s.WorkingDirectory,

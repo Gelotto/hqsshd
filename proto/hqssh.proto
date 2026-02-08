@@ -146,6 +146,7 @@ message Session {
   int64 ended_at = 9;               // Unix timestamp (0 if still active)
   string log_path = 10;             // Path to session log file
   int64 log_size_bytes = 11;        // Size of log file in bytes
+  string name = 12;                 // Human-readable session name (auto-generated or explicit)
 }
 
 enum SessionStatus {
@@ -162,6 +163,7 @@ message CreateSessionRequest {
   repeated string args = 4;         // Additional tool arguments
   int32 cols = 5;                   // Terminal columns
   int32 rows = 6;                   // Terminal rows
+  string name = 7;                  // Optional explicit session name
 }
 
 message ListSessionsRequest {

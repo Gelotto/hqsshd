@@ -38,16 +38,26 @@ type Config struct {
 	// Tool configuration
 	Tools []ToolConfig `yaml:"tools"`
 
+	// Task configuration
+	Tasks TaskConfig `yaml:"tasks"`
+
 	// Logging configuration
 	Log LogConfig `yaml:"log"`
 }
 
 type SessionConfig struct {
-	IdleTimeout      int    `yaml:"idle_timeout"`       // Seconds before session considered idle (default: 86400 = 24h)
-	MaxSessions      int    `yaml:"max_sessions"`       // Maximum concurrent sessions (default: 20)
-	HistorySize      int    `yaml:"history_size"`       // Lines of scrollback (default: 10000)
-	LogRetentionDays int    `yaml:"log_retention_days"` // Days to keep ended session logs (default: 30, 0 = forever)
-	LogDirectory     string `yaml:"log_directory"`      // Directory for session logs (default: ~/.hqssh/logs/sessions)
+	IdleTimeout      int    `yaml:"idle_timeout"`        // Seconds before session considered idle (default: 86400 = 24h)
+	MaxSessions      int    `yaml:"max_sessions"`        // Maximum concurrent sessions (default: 20)
+	HistorySize      int    `yaml:"history_size"`        // Lines of scrollback (default: 10000)
+	LogRetentionDays int    `yaml:"log_retention_days"`  // Days to keep ended session logs (default: 30, 0 = forever)
+	LogDirectory     string `yaml:"log_directory"`       // Directory for session logs (default: ~/.hqssh/logs/sessions)
+	ClientBufferSize int    `yaml:"client_buffer_size"`  // Per-client output channel buffer (default: 256)
+	MaxScrollbackSize int   `yaml:"max_scrollback_size"` // Max scrollback buffer in bytes (default: 10MB)
+}
+
+type TaskConfig struct {
+	MaxOutputSize  int `yaml:"max_output_size"`    // Max task output in bytes (default: 1MB)
+	MaxRunsPerTask int `yaml:"max_runs_per_task"`  // Max retained runs per task (default: 10)
 }
 
 type ProjectConfig struct {
@@ -75,11 +85,17 @@ func DefaultConfig() *Config {
 		Socket:  DefaultSocketPath,
 		TCPPort: DefaultTCPPort,
 		Sessions: SessionConfig{
-			IdleTimeout:      86400, // 24 hours
-			MaxSessions:      20,
-			HistorySize:      10000,
-			LogRetentionDays: 30,    // 30 days
-			LogDirectory:     "",    // Empty = default (~/.hqssh/logs/sessions)
+			IdleTimeout:       86400, // 24 hours
+			MaxSessions:       20,
+			HistorySize:       10000,
+			LogRetentionDays:  30,               // 30 days
+			LogDirectory:      "",               // Empty = default (~/.hqssh/logs/sessions)
+			ClientBufferSize:  256,              // Per-client output channel buffer
+			MaxScrollbackSize: 10 * 1024 * 1024, // 10MB
+		},
+		Tasks: TaskConfig{
+			MaxOutputSize:  1024 * 1024, // 1MB
+			MaxRunsPerTask: 10,
 		},
 		Projects: ProjectConfig{
 			ScanDirectories: []string{

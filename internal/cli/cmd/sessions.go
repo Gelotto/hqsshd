@@ -65,6 +65,7 @@ func runSessions(cmd *cobra.Command, args []string) error {
 	if jsonOutput {
 		type jsonSession struct {
 			ID           string `json:"id"`
+			Name         string `json:"name"`
 			Tool         string `json:"tool"`
 			Status       string `json:"status"`
 			ProjectID    string `json:"project_id,omitempty"`
@@ -77,6 +78,7 @@ func runSessions(cmd *cobra.Command, args []string) error {
 		for i, s := range sessions {
 			out[i] = jsonSession{
 				ID:           s.Id,
+				Name:         s.Name,
 				Tool:         s.Tool,
 				Status:       statusString(s.Status),
 				ProjectID:    s.ProjectId,
@@ -102,25 +104,25 @@ func runSessions(cmd *cobra.Command, args []string) error {
 
 	// Print sessions table
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tTOOL\tSTATUS\tPROJECT\tCLIENTS\tLAST ACTIVITY")
-	fmt.Fprintln(w, "--\t----\t------\t-------\t-------\t-------------")
+	fmt.Fprintln(w, "ID\tNAME\tSTATUS\tCLIENTS\tLAST ACTIVITY")
+	fmt.Fprintln(w, "--\t----\t------\t-------\t-------------")
 
 	for _, s := range sessions {
 		status := statusString(s.Status)
-		project := s.ProjectId
-		if project == "" {
-			project = "(shell)"
-		} else if len(project) > 20 {
-			project = project[:17] + "..."
+		name := s.Name
+		if name == "" {
+			name = strings.ToUpper(s.Tool)
+		}
+		if len(name) > 30 {
+			name = name[:27] + "..."
 		}
 
 		lastActivity := formatTime(s.LastActivity)
 
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%s\n",
+		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\n",
 			shortID(s.Id),
-			strings.ToUpper(s.Tool),
+			name,
 			status,
-			project,
 			s.ClientCount,
 			lastActivity,
 		)

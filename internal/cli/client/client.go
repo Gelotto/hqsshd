@@ -16,6 +16,7 @@ import (
 	"golang.org/x/term"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 )
 
 const (
@@ -33,6 +34,7 @@ type Client struct {
 	sshClient *ssh.Client
 	grpcConn  *grpc.ClientConn
 	listener  net.Listener
+	done      chan struct{} // closed on Close() to stop keepalive goroutine
 
 	SessionService pb.SessionServiceClient
 	ProjectService pb.ProjectServiceClient
@@ -94,15 +96,38 @@ func Connect(ctx context.Context, cfg Config) (*Client, error) {
 	c := &Client{
 		sshClient: sshClient,
 		listener:  listener,
+		done:      make(chan struct{}),
 	}
 
 	// Start forwarding goroutine
 	go c.forwardConnections()
 
+	// Start SSH keepalive to detect dead connections
+	go func() {
+		t := time.NewTicker(15 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-c.done:
+				return
+			case <-t.C:
+				_, _, err := sshClient.SendRequest("keepalive@openssh.com", true, nil)
+				if err != nil {
+					return
+				}
+			}
+		}
+	}()
+
 	// Connect gRPC through tunnel
 	grpcAddr := listener.Addr().String()
 	grpcConn, err := grpc.NewClient(grpcAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                20 * time.Second,
+			Timeout:             5 * time.Second,
+			PermitWithoutStream: true,
+		}),
 	)
 	if err != nil {
 		c.Close()
@@ -271,6 +296,9 @@ func (c *Client) forwardConnections() {
 // Active forwarding connections will be closed when their copy operations
 // detect the closed listener/SSH client and exit.
 func (c *Client) Close() error {
+	if c.done != nil {
+		close(c.done)
+	}
 	if c.grpcConn != nil {
 		c.grpcConn.Close()
 	}

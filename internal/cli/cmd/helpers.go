@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -97,7 +98,7 @@ func resolveSessionIncludeEnded(ctx context.Context, c *client.Client, idPrefix,
 	return resolveSessionByPrefix(ctx, c, idPrefix, true, hostLabel)
 }
 
-// resolveSessionByPrefix finds a session matching the given ID prefix.
+// resolveSessionByPrefix finds a session matching the given ID or name prefix.
 func resolveSessionByPrefix(ctx context.Context, c *client.Client, idPrefix string, includeEnded bool, hostLabel string) (string, error) {
 	resp, err := c.SessionService.List(ctx, &pb.ListSessionsRequest{IncludeEnded: includeEnded})
 	if err != nil {
@@ -106,7 +107,13 @@ func resolveSessionByPrefix(ctx context.Context, c *client.Client, idPrefix stri
 
 	var matches []*pb.Session
 	for _, s := range resp.Sessions {
+		// Match by ID prefix
 		if s.Id == idPrefix || (len(s.Id) >= len(idPrefix) && s.Id[:len(idPrefix)] == idPrefix) {
+			matches = append(matches, s)
+			continue
+		}
+		// Match by name prefix
+		if s.Name != "" && len(s.Name) >= len(idPrefix) && strings.EqualFold(s.Name[:len(idPrefix)], idPrefix) {
 			matches = append(matches, s)
 		}
 	}

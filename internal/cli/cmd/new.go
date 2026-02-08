@@ -15,6 +15,7 @@ var (
 	newTool     string
 	newProject  string
 	newNoAttach bool
+	newName     string
 )
 
 var newCmd = &cobra.Command{
@@ -37,6 +38,7 @@ func init() {
 	newCmd.Flags().StringVarP(&newTool, "tool", "t", "shell", "Tool to launch: claude, codex, aider, shell")
 	newCmd.Flags().StringVarP(&newProject, "project", "d", "", "Working directory or project path")
 	newCmd.Flags().BoolVar(&newNoAttach, "no-attach", false, "Create session but don't attach")
+	newCmd.Flags().StringVarP(&newName, "name", "n", "", "Explicit session name (auto-generated if omitted)")
 	rootCmd.AddCommand(newCmd)
 }
 
@@ -75,6 +77,7 @@ func runNew(cmd *cobra.Command, args []string) error {
 		WorkingDirectory: workingDir,
 		Cols:             int32(cols),
 		Rows:             int32(rows),
+		Name:             newName,
 	})
 	if err != nil {
 		return fmt.Errorf("create session: %w", err)

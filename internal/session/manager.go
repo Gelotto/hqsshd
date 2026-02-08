@@ -16,13 +16,14 @@ type Manager struct {
 	sessionsMu sync.RWMutex
 
 	// Configuration
-	idleTimeout   time.Duration
-	maxSessions   int
-	maxBufferSize int // bytes for scrollback buffer
-	cleanupTicker *time.Ticker
-	done          chan struct{}
-	wg            sync.WaitGroup // Wait for cleanupLoop to exit
-	closed        atomic.Bool    // Prevent double-close panic
+	idleTimeout      time.Duration
+	maxSessions      int
+	maxBufferSize    int // bytes for scrollback buffer
+	clientBufferSize int // per-client output channel buffer size
+	cleanupTicker    *time.Ticker
+	done             chan struct{}
+	wg               sync.WaitGroup // Wait for cleanupLoop to exit
+	closed           atomic.Bool    // Prevent double-close panic
 
 	// Persistence
 	store        *Store // Session metadata persistence
@@ -35,13 +36,23 @@ type Manager struct {
 // dataDir is the base data directory (e.g., ~/.hqssh)
 // logDir is the directory for session logs (empty string uses default: dataDir/logs/sessions)
 // retentionDays is how long to keep ended session logs (0 = forever)
-func NewManager(idleTimeoutSec, maxSessions, historySize int, dataDir, logDir string, retentionDays int) *Manager {
-	// Convert lines to bytes (estimate ~100 bytes per line)
-	maxBufferSize := historySize * 100
+// clientBufferSize is the per-client output channel buffer size (0 = default 256)
+// maxScrollbackSize overrides the scrollback buffer size in bytes (0 = derive from historySize)
+func NewManager(idleTimeoutSec, maxSessions, historySize int, dataDir, logDir string, retentionDays, clientBufferSize, maxScrollbackSize int) *Manager {
+	// Use explicit maxScrollbackSize if provided, otherwise derive from historySize
+	maxBufferSize := maxScrollbackSize
 	if maxBufferSize <= 0 {
-		// 10MB default - AI tools (Claude, Codex, etc.) produce lots of output
-		// with syntax highlighting, markdown, and verbose responses
-		maxBufferSize = 10 * 1024 * 1024
+		// Convert lines to bytes (estimate ~100 bytes per line)
+		maxBufferSize = historySize * 100
+		if maxBufferSize <= 0 {
+			// 10MB default - AI tools (Claude, Codex, etc.) produce lots of output
+			// with syntax highlighting, markdown, and verbose responses
+			maxBufferSize = 10 * 1024 * 1024
+		}
+	}
+
+	if clientBufferSize <= 0 {
+		clientBufferSize = 256
 	}
 
 	// Default log directory
@@ -56,14 +67,15 @@ func NewManager(idleTimeoutSec, maxSessions, historySize int, dataDir, logDir st
 	}
 
 	m := &Manager{
-		sessions:      make(map[string]*Session),
-		idleTimeout:   time.Duration(idleTimeoutSec) * time.Second,
-		maxSessions:   maxSessions,
-		maxBufferSize: maxBufferSize,
-		done:          make(chan struct{}),
-		store:         store,
-		logDir:        logDir,
-		retentionDays: retentionDays,
+		sessions:         make(map[string]*Session),
+		idleTimeout:      time.Duration(idleTimeoutSec) * time.Second,
+		maxSessions:      maxSessions,
+		maxBufferSize:    maxBufferSize,
+		clientBufferSize: clientBufferSize,
+		done:             make(chan struct{}),
+		store:            store,
+		logDir:           logDir,
+		retentionDays:    retentionDays,
 	}
 
 	// Mark any previously "running" or "idle" sessions as ended (daemon restart)
@@ -184,8 +196,9 @@ func (m *Manager) cleanup() {
 	}
 }
 
-// Create creates a new session with the given parameters
-func (m *Manager) Create(projectID, tool, workingDir string, args []string, cols, rows int) (*Session, error) {
+// Create creates a new session with the given parameters.
+// If name is empty, it is auto-generated from workingDir, tool, and short ID.
+func (m *Manager) Create(projectID, tool, workingDir, name string, args []string, cols, rows int) (*Session, error) {
 	m.sessionsMu.Lock()
 	defer m.sessionsMu.Unlock()
 
@@ -199,7 +212,7 @@ func (m *Manager) Create(projectID, tool, workingDir string, args []string, cols
 	}
 
 	// Create session with config-based buffer size
-	sess := NewSession(projectID, tool, workingDir, args, cols, rows, m.maxBufferSize)
+	sess := NewSession(projectID, tool, workingDir, name, args, cols, rows, m.maxBufferSize)
 
 	// Create session logger for persistent output
 	logger, err := NewSessionLogger(sess.ID, m.logDir)
@@ -320,8 +333,8 @@ func (m *Manager) Attach(sessionID string, cols, rows int) (string, <-chan []byt
 	// Get scrollback before attaching (for catch-up)
 	scrollback := sess.GetScrollback()
 
-	// Add client
-	outputCh := sess.AddClient(clientID)
+	// Add client with configurable buffer size
+	outputCh := sess.AddClient(clientID, m.clientBufferSize)
 
 	logging.Info("client attached",
 		"session_id", sessionID,
