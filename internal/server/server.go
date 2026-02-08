@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -458,6 +459,9 @@ func (s *sessionService) Attach(req *pb.AttachRequest, stream pb.SessionService_
 	// Attach to session
 	clientID, outputCh, scrollback, err := s.server.sessionManager.Attach(sessionID, cols, rows)
 	if err != nil {
+		if strings.Contains(err.Error(), "has ended") {
+			return status.Errorf(codes.FailedPrecondition, "session has ended")
+		}
 		return status.Errorf(codes.NotFound, "failed to attach: %v", err)
 	}
 
