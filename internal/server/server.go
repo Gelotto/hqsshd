@@ -16,6 +16,7 @@ package server
 
 import (
 	"context"
+	"crypto/subtle"
 	"fmt"
 	"io"
 	"net"
@@ -33,6 +34,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/gelotto/hqsshd/internal/config"
+	"github.com/gelotto/hqsshd/internal/logging"
 	"github.com/gelotto/hqsshd/internal/project"
 	"github.com/gelotto/hqsshd/internal/session"
 	"github.com/gelotto/hqsshd/internal/task"
@@ -72,7 +74,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 
 	// Load existing project registry
 	if err := registry.Load(); err != nil {
-		fmt.Printf("Warning: failed to load project registry: %v\n", err)
+		logging.Warn("failed to load project registry", "error", err)
 	}
 
 	// Create session manager with config values
@@ -90,12 +92,12 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	// Create task store and run store
 	taskStore := task.NewStore(dataDir)
 	if err := taskStore.Load(); err != nil {
-		fmt.Printf("Warning: failed to load task store: %v\n", err)
+		logging.Warn("failed to load task store", "error", err)
 	}
 
 	taskRunStore := task.NewRunStore(dataDir, cfg.Tasks.MaxRunsPerTask)
 	if err := taskRunStore.Load(); err != nil {
-		fmt.Printf("Warning: failed to load task run store: %v\n", err)
+		logging.Warn("failed to load task run store", "error", err)
 	}
 
 	// Create task executor
@@ -142,9 +144,10 @@ func (s *Server) Start() error {
 		tcpAddr := fmt.Sprintf("127.0.0.1:%d", s.config.TCPPort)
 		tcpListener, err = net.Listen("tcp", tcpAddr)
 		if err != nil {
-			fmt.Printf("Warning: TCP port %d unavailable (%v), continuing with Unix socket only\n", s.config.TCPPort, err)
-			fmt.Printf("  Remote clients (mobile app, SSH tunnels) will not be able to connect.\n")
-			fmt.Printf("  Local CLI will still work via Unix socket.\n")
+			logging.Warn("TCP port unavailable, continuing with Unix socket only",
+				"port", s.config.TCPPort,
+				"error", err,
+			)
 		}
 	}
 
@@ -170,7 +173,7 @@ func (s *Server) Start() error {
 			grpc.UnaryInterceptor(s.authUnaryInterceptor),
 			grpc.StreamInterceptor(s.authStreamInterceptor),
 		)
-		fmt.Println("  Auth: token-based authentication enabled")
+		logging.Info("token-based authentication enabled")
 	}
 
 	// Create gRPC server
@@ -192,13 +195,15 @@ func (s *Server) Start() error {
 	// but should be disabled in production.
 	if s.config.EnableReflection {
 		reflection.Register(s.grpcServer)
-		fmt.Println("  Reflection: enabled (disable in production)")
+		logging.Warn("gRPC reflection enabled (disable in production)")
 	}
 
-	fmt.Printf("HQSSH daemon v%s starting\n", config.DaemonVersion)
-	fmt.Printf("  Unix socket: %s\n", socketPath)
+	logging.Info("hqsshd starting",
+		"version", config.DaemonVersion,
+		"unix_socket", socketPath,
+	)
 	if s.tcpListener != nil {
-		fmt.Printf("  TCP port: 127.0.0.1:%d (for SSH tunnel)\n", s.config.TCPPort)
+		logging.Info("TCP listener started", "addr", fmt.Sprintf("127.0.0.1:%d", s.config.TCPPort))
 	}
 
 	// Start serving on TCP listener in background goroutine
@@ -209,9 +214,7 @@ func (s *Server) Start() error {
 		go func() {
 			defer s.tcpWg.Done()
 			if err := s.grpcServer.Serve(s.tcpListener); err != nil {
-				// Log error - don't silently drop it
-				// Note: "use of closed network connection" is normal during shutdown
-				fmt.Printf("TCP listener stopped: %v\n", err)
+				logging.Info("TCP listener stopped", "error", err)
 			}
 		}()
 	}
@@ -248,21 +251,21 @@ func (s *Server) Stop() {
 	// Save project registry
 	if s.registry != nil {
 		if err := s.registry.Save(); err != nil {
-			fmt.Printf("Warning: failed to save project registry: %v\n", err)
+			logging.Warn("failed to save project registry", "error", err)
 		}
 	}
 
 	// Save task store
 	if s.taskStore != nil {
 		if err := s.taskStore.Save(); err != nil {
-			fmt.Printf("Warning: failed to save task store: %v\n", err)
+			logging.Warn("failed to save task store", "error", err)
 		}
 	}
 
 	// Save task run store
 	if s.taskRunStore != nil {
 		if err := s.taskRunStore.Save(); err != nil {
-			fmt.Printf("Warning: failed to save task run store: %v\n", err)
+			logging.Warn("failed to save task run store", "error", err)
 		}
 	}
 }
@@ -324,7 +327,7 @@ func (s *Server) validateAuth(ctx context.Context) error {
 		token = token[7:]
 	}
 
-	if token != s.config.AuthToken {
+	if subtle.ConstantTimeCompare([]byte(token), []byte(s.config.AuthToken)) != 1 {
 		return status.Error(codes.Unauthenticated, "invalid authorization token")
 	}
 	return nil

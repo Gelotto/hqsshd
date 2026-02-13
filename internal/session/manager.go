@@ -206,6 +206,9 @@ func (m *Manager) cleanup() {
 				"removed", removed,
 				"retention_days", m.retentionDays,
 			)
+			if err := m.store.Save(); err != nil {
+				logging.Warn("failed to save session store after retention cleanup", "error", err)
+			}
 		}
 	}
 }

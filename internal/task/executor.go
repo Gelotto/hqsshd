@@ -27,6 +27,7 @@ import (
 
 	"github.com/creack/pty"
 	"github.com/gelotto/hqsshd/internal/config"
+	"github.com/gelotto/hqsshd/internal/logging"
 )
 
 const (
@@ -210,7 +211,7 @@ func (e *Executor) executeTask(task *Task, run *Run, projectPath string) {
 		// Send prompt followed by newline
 		_, err := ptmx.Write([]byte(task.Prompt + "\n"))
 		if err != nil {
-			fmt.Printf("Warning: failed to write prompt to task: %v\n", err)
+			logging.Warn("failed to write prompt to task", "task_id", task.ID, "error", err)
 		}
 
 		// For non-interactive AI tools, send EOF after prompt
@@ -228,7 +229,7 @@ func (e *Executor) executeTask(task *Task, run *Run, projectPath string) {
 		limitedReader := io.LimitReader(ptmx, e.maxOutputSize)
 		n, err := io.Copy(&outputBuf, limitedReader)
 		if err != nil {
-			fmt.Printf("Warning: error reading task output: %v\n", err)
+			logging.Warn("error reading task output", "run_id", run.ID, "error", err)
 		}
 		// If we hit the size limit, notify the user
 		if n >= e.maxOutputSize {
@@ -276,7 +277,7 @@ func (e *Executor) executeTask(task *Task, run *Run, projectPath string) {
 
 	// Persist run state after completion
 	if err := e.runStore.Save(); err != nil {
-		fmt.Printf("Warning: failed to save task run store: %v\n", err)
+		logging.Warn("failed to save task run store", "run_id", run.ID, "error", err)
 	}
 }
 
