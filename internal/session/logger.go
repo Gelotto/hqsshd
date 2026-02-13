@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -308,9 +309,23 @@ func (l *SessionLogger) compressLog() error {
 	return nil
 }
 
+// validateLogPath ensures the session ID doesn't escape the log directory via path traversal.
+func validateLogPath(logDir, sessionID string) error {
+	cleanDir := filepath.Clean(logDir) + string(os.PathSeparator)
+	testPath := filepath.Clean(filepath.Join(logDir, sessionID))
+	if !strings.HasPrefix(testPath, cleanDir) {
+		return fmt.Errorf("invalid session ID")
+	}
+	return nil
+}
+
 // ReadLog reads the log file for a session (handles both .log and .log.gz)
 // Returns an io.ReadCloser that must be closed by the caller.
 func ReadLog(logDir, sessionID string) (io.ReadCloser, error) {
+	if err := validateLogPath(logDir, sessionID); err != nil {
+		return nil, err
+	}
+
 	// Try compressed file first
 	gzPath := filepath.Join(logDir, sessionID+".log.gz")
 	if _, err := os.Stat(gzPath); err == nil {
@@ -340,6 +355,10 @@ func ReadLog(logDir, sessionID string) (io.ReadCloser, error) {
 
 // GetLogSize returns the size of the log file (compressed or uncompressed)
 func GetLogSize(logDir, sessionID string) (int64, error) {
+	if err := validateLogPath(logDir, sessionID); err != nil {
+		return 0, err
+	}
+
 	// Try compressed file first
 	gzPath := filepath.Join(logDir, sessionID+".log.gz")
 	if info, err := os.Stat(gzPath); err == nil {
@@ -357,6 +376,10 @@ func GetLogSize(logDir, sessionID string) (int64, error) {
 
 // DeleteLog removes the log file (both .log and .log.gz if they exist)
 func DeleteLog(logDir, sessionID string) error {
+	if err := validateLogPath(logDir, sessionID); err != nil {
+		return err
+	}
+
 	gzPath := filepath.Join(logDir, sessionID+".log.gz")
 	logPath := filepath.Join(logDir, sessionID+".log")
 

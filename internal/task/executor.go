@@ -255,6 +255,7 @@ func (e *Executor) executeTask(task *Task, run *Run, projectPath string) {
 // buildCommand builds the exec.Cmd for the task's tool.
 // All non-shell commands are wrapped in a login shell to ensure
 // tools installed via nvm/pyenv/asdf are available on PATH.
+// Prompts are passed as positional arguments ($1) to prevent shell injection.
 func (e *Executor) buildCommand(task *Task, workingDir string) *exec.Cmd {
 	shell := os.Getenv("SHELL")
 	if shell == "" {
@@ -266,18 +267,19 @@ func (e *Executor) buildCommand(task *Task, workingDir string) *exec.Cmd {
 	switch task.Tool {
 	case "claude":
 		// Claude with --print flag for non-interactive mode
-		cmd = exec.Command(shell, "-l", "-c", fmt.Sprintf("claude --print %q", task.Prompt))
+		// Prompt passed as $1 to prevent shell expansion
+		cmd = exec.Command(shell, "-l", "-c", `claude --print "$1"`, "_", task.Prompt)
 	case "codex":
-		cmd = exec.Command(shell, "-l", "-c", fmt.Sprintf("codex %q", task.Prompt))
+		cmd = exec.Command(shell, "-l", "-c", `codex "$1"`, "_", task.Prompt)
 	case "aider":
 		// Aider with --yes for non-interactive
-		cmd = exec.Command(shell, "-l", "-c", fmt.Sprintf("aider --yes --message %q", task.Prompt))
+		cmd = exec.Command(shell, "-l", "-c", `aider --yes --message "$1"`, "_", task.Prompt)
 	case "shell":
-		// For shell, run the prompt as a command
+		// Intentionally runs prompt as a command — this is the tool's purpose
 		cmd = exec.Command(shell, "-l", "-c", task.Prompt)
 	default:
-		// Try to run the tool directly
-		cmd = exec.Command(shell, "-l", "-c", fmt.Sprintf("%s %q", task.Tool, task.Prompt))
+		// Tool name already validated against config whitelist
+		cmd = exec.Command(shell, "-l", "-c", fmt.Sprintf(`%s "$1"`, task.Tool), "_", task.Prompt)
 	}
 
 	cmd.Dir = workingDir

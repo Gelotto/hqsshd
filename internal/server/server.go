@@ -235,6 +235,20 @@ func (s *Server) Stop() {
 	}
 }
 
+// isValidTool checks if a tool name is in the configured whitelist or is "shell".
+// This prevents arbitrary command injection via the tool field.
+func (s *Server) isValidTool(tool string) bool {
+	if tool == "shell" {
+		return true
+	}
+	for _, t := range s.config.Tools {
+		if t.Name == tool {
+			return true
+		}
+	}
+	return false
+}
+
 // ============================================================================
 // SystemService Implementation
 // ============================================================================
@@ -382,6 +396,9 @@ func (s *sessionService) Create(ctx context.Context, req *pb.CreateSessionReques
 	tool := req.GetTool()
 	if tool == "" {
 		return nil, status.Error(codes.InvalidArgument, "tool is required")
+	}
+	if !s.server.isValidTool(tool) {
+		return nil, status.Errorf(codes.InvalidArgument, "unknown tool: %q", tool)
 	}
 
 	// Determine working directory
@@ -759,6 +776,9 @@ func (s *taskService) Create(ctx context.Context, req *pb.CreateTaskRequest) (*p
 	if tool == "" {
 		return nil, status.Error(codes.InvalidArgument, "tool is required")
 	}
+	if !s.server.isValidTool(tool) {
+		return nil, status.Errorf(codes.InvalidArgument, "unknown tool: %q", tool)
+	}
 
 	scope := protoToTaskScope(req.GetScope())
 	if scope == task.TaskScopeUnspecified {
@@ -813,6 +833,11 @@ func (s *taskService) Update(ctx context.Context, req *pb.UpdateTaskRequest) (*p
 	existing := s.server.taskStore.Get(id)
 	if existing == nil {
 		return nil, status.Error(codes.NotFound, "task not found")
+	}
+
+	// Validate tool if being updated
+	if tool := req.GetTool(); tool != "" && !s.server.isValidTool(tool) {
+		return nil, status.Errorf(codes.InvalidArgument, "unknown tool: %q", tool)
 	}
 
 	scope := protoToTaskScope(req.GetScope())
@@ -885,6 +910,10 @@ func (s *taskService) Run(ctx context.Context, req *pb.RunTaskRequest) (*pb.Task
 	t := s.server.taskStore.Get(taskID)
 	if t == nil {
 		return nil, status.Error(codes.NotFound, "task not found")
+	}
+
+	if !s.server.isValidTool(t.Tool) {
+		return nil, status.Errorf(codes.FailedPrecondition, "task has invalid tool %q (not in current config)", t.Tool)
 	}
 
 	// Determine project path for project-scoped tasks

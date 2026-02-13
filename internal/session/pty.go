@@ -5,7 +5,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"strings"
 	"syscall"
 	"time"
 
@@ -80,8 +79,9 @@ func (s *Session) buildCommand() (*exec.Cmd, error) {
 	case "shell":
 		// Interactive shell session - use login shell directly
 		if len(s.Args) > 0 {
-			// Run a command in the shell
-			cmd = exec.Command(shell, "-l", "-i", "-c", strings.Join(s.Args, " "))
+			// Pass args as positional parameters to prevent injection
+			shellArgs := append([]string{"-l", "-i", "-c", `"$@"`, "_"}, s.Args...)
+			cmd = exec.Command(shell, shellArgs...)
 		} else {
 			// Interactive login shell
 			cmd = exec.Command(shell, "-l")
@@ -89,25 +89,21 @@ func (s *Session) buildCommand() (*exec.Cmd, error) {
 	default:
 		// Tools (claude, codex, aider, etc.) - wrap in login shell
 		// This ensures PATH from .bashrc/.bash_profile is loaded
-		toolCmd := s.Tool
+		// Args passed via positional parameters to prevent shell injection
 		if len(s.Args) > 0 {
-			// Quote args that contain spaces for shell execution
-			quotedArgs := make([]string, len(s.Args))
-			for i, arg := range s.Args {
-				if strings.ContainsAny(arg, " \t\"'") {
-					quotedArgs[i] = fmt.Sprintf("%q", arg)
-				} else {
-					quotedArgs[i] = arg
-				}
-			}
-			toolCmd = s.Tool + " " + strings.Join(quotedArgs, " ")
+			// Pass tool + args via positional parameters ("$@" expands safely)
+			allArgs := append([]string{s.Tool}, s.Args...)
+			shellArgs := append([]string{"-l", "-i", "-c", `"$@"`, "_"}, allArgs...)
+			cmd = exec.Command(shell, shellArgs...)
+		} else {
+			cmd = exec.Command(shell, "-l", "-i", "-c", s.Tool)
 		}
-		cmd = exec.Command(shell, "-l", "-i", "-c", toolCmd)
 
 		logging.Debug("building command with login shell",
 			"session_id", s.ID,
 			"shell", shell,
-			"tool_cmd", toolCmd,
+			"tool", s.Tool,
+			"args_count", len(s.Args),
 		)
 	}
 
