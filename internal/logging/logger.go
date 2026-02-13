@@ -52,7 +52,7 @@ func Init(cfg *Config) error {
 
 	// If file is specified, open it for logging
 	if cfg.File != "" {
-		f, err := os.OpenFile(cfg.File, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+		f, err := os.OpenFile(cfg.File, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 		if err != nil {
 			return err
 		}

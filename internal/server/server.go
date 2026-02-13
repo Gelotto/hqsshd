@@ -28,6 +28,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
 
@@ -98,7 +99,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	}
 
 	// Create task executor
-	taskExecutor := task.NewExecutor(taskStore, taskRunStore, cfg.Tasks.MaxOutputSize)
+	taskExecutor := task.NewExecutor(taskStore, taskRunStore, cfg.Tasks.MaxOutputSize, cfg.Tasks.MaxTimeout)
 
 	return &Server{
 		config:         cfg,
@@ -151,8 +152,8 @@ func (s *Server) Start() error {
 	s.unixListener = unixListener
 	s.tcpListener = tcpListener
 
-	// Create gRPC server with keepalive for detecting dead connections
-	s.grpcServer = grpc.NewServer(
+	// Build gRPC server options
+	serverOpts := []grpc.ServerOption{
 		grpc.KeepaliveParams(keepalive.ServerParameters{
 			Time:    20 * time.Second, // Send ping every 20s if idle
 			Timeout: 5 * time.Second,  // Wait 5s for pong
@@ -161,7 +162,19 @@ func (s *Server) Start() error {
 			MinTime:             10 * time.Second, // Minimum time between client pings
 			PermitWithoutStream: true,             // Allow pings even when no streams
 		}),
-	)
+	}
+
+	// Add auth interceptors if token is configured
+	if s.config.AuthToken != "" {
+		serverOpts = append(serverOpts,
+			grpc.UnaryInterceptor(s.authUnaryInterceptor),
+			grpc.StreamInterceptor(s.authStreamInterceptor),
+		)
+		fmt.Println("  Auth: token-based authentication enabled")
+	}
+
+	// Create gRPC server
+	s.grpcServer = grpc.NewServer(serverOpts...)
 
 	// Create and register services
 	systemSvc := &systemService{server: s}
@@ -174,8 +187,13 @@ func (s *Server) Start() error {
 	pb.RegisterSessionServiceServer(s.grpcServer, sessionSvc)
 	pb.RegisterTaskServiceServer(s.grpcServer, taskSvc)
 
-	// Enable gRPC reflection for debugging with grpcurl
-	reflection.Register(s.grpcServer)
+	// Enable gRPC reflection only when explicitly configured (off by default).
+	// Reflection exposes the full API schema, which is useful for debugging
+	// but should be disabled in production.
+	if s.config.EnableReflection {
+		reflection.Register(s.grpcServer)
+		fmt.Println("  Reflection: enabled (disable in production)")
+	}
 
 	fmt.Printf("HQSSH daemon v%s starting\n", config.DaemonVersion)
 	fmt.Printf("  Unix socket: %s\n", socketPath)
@@ -249,11 +267,16 @@ func (s *Server) Stop() {
 	}
 }
 
-// isValidTool checks if a tool name is in the configured whitelist or is "shell".
-// This prevents arbitrary command injection via the tool field.
+// isValidTool checks if a tool name is in the configured whitelist.
+// The "shell" tool requires explicit opt-in via config.EnableShellTool.
+// Tool names must also pass character validation.
 func (s *Server) isValidTool(tool string) bool {
+	// Validate characters first
+	if !config.ValidateToolName(tool) {
+		return false
+	}
 	if tool == "shell" {
-		return true
+		return s.config.EnableShellTool
 	}
 	for _, t := range s.config.Tools {
 		if t.Name == tool {
@@ -261,6 +284,50 @@ func (s *Server) isValidTool(tool string) bool {
 		}
 	}
 	return false
+}
+
+// authUnaryInterceptor validates the auth token on unary RPCs.
+func (s *Server) authUnaryInterceptor(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+	if err := s.validateAuth(ctx); err != nil {
+		return nil, err
+	}
+	return handler(ctx, req)
+}
+
+// authStreamInterceptor validates the auth token on streaming RPCs.
+func (s *Server) authStreamInterceptor(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+	if err := s.validateAuth(ss.Context()); err != nil {
+		return err
+	}
+	return handler(srv, ss)
+}
+
+// validateAuth checks the authorization metadata header against the configured token.
+func (s *Server) validateAuth(ctx context.Context) error {
+	if s.config.AuthToken == "" {
+		return nil // No auth configured
+	}
+
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return status.Error(codes.Unauthenticated, "missing metadata")
+	}
+
+	values := md.Get("authorization")
+	if len(values) == 0 {
+		return status.Error(codes.Unauthenticated, "missing authorization token")
+	}
+
+	token := values[0]
+	// Support "Bearer <token>" format
+	if len(token) >= 7 && token[:7] == "Bearer " {
+		token = token[7:]
+	}
+
+	if token != s.config.AuthToken {
+		return status.Error(codes.Unauthenticated, "invalid authorization token")
+	}
+	return nil
 }
 
 // ============================================================================
@@ -442,7 +509,7 @@ func (s *sessionService) Create(ctx context.Context, req *pb.CreateSessionReques
 		return nil, status.Errorf(codes.InvalidArgument, "working directory does not exist: %s", workingDir)
 	}
 
-	// Default terminal size
+	// Default terminal size with upper bounds
 	cols := int(req.GetCols())
 	rows := int(req.GetRows())
 	if cols <= 0 {
@@ -450,6 +517,12 @@ func (s *sessionService) Create(ctx context.Context, req *pb.CreateSessionReques
 	}
 	if rows <= 0 {
 		rows = 24
+	}
+	if cols > 500 {
+		cols = 500
+	}
+	if rows > 200 {
+		rows = 200
 	}
 
 	// Get optional tool arguments and name
@@ -486,6 +559,19 @@ func (s *sessionService) Attach(req *pb.AttachRequest, stream pb.SessionService_
 
 	cols := int(req.GetCols())
 	rows := int(req.GetRows())
+	// Clamp dimensions (same as Create)
+	if cols <= 0 {
+		cols = 80
+	}
+	if rows <= 0 {
+		rows = 24
+	}
+	if cols > 500 {
+		cols = 500
+	}
+	if rows > 200 {
+		rows = 200
+	}
 
 	// Attach to session
 	clientID, outputCh, scrollback, err := s.server.sessionManager.Attach(sessionID, cols, rows)
@@ -596,6 +682,9 @@ func (s *sessionService) Resize(ctx context.Context, req *pb.ResizeRequest) (*pb
 
 	if cols <= 0 || rows <= 0 {
 		return nil, status.Error(codes.InvalidArgument, "cols and rows must be positive")
+	}
+	if cols > 500 || rows > 200 {
+		return nil, status.Error(codes.InvalidArgument, "terminal dimensions too large (max 500x200)")
 	}
 
 	if err := s.server.sessionManager.Resize(sessionID, cols, rows); err != nil {

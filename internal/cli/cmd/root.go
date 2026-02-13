@@ -21,6 +21,7 @@ import (
 	"github.com/gelotto/hqsshd/internal/cli/config"
 	daemonconfig "github.com/gelotto/hqsshd/internal/config"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 var (
@@ -29,7 +30,7 @@ var (
 	port        int
 	user        string
 	keyPath     string
-	password    string
+	usePassword bool // prompt for password interactively
 	insecureKey bool
 	socket      string
 )
@@ -81,7 +82,7 @@ func init() {
 	rootCmd.PersistentFlags().IntVarP(&port, "port", "P", 22, "SSH port")
 	rootCmd.PersistentFlags().StringVarP(&user, "user", "u", os.Getenv("USER"), "SSH username")
 	rootCmd.PersistentFlags().StringVarP(&keyPath, "key", "k", "", "SSH private key path")
-	rootCmd.PersistentFlags().StringVarP(&password, "password", "p", "", "SSH password (not recommended)")
+	rootCmd.PersistentFlags().BoolVarP(&usePassword, "password", "p", false, "Prompt for SSH password")
 	rootCmd.PersistentFlags().BoolVar(&insecureKey, "insecure", false, "Skip host key verification")
 	rootCmd.PersistentFlags().StringVarP(&socket, "socket", "S", "", "Unix socket path (local daemon)")
 
@@ -109,7 +110,29 @@ func resolveConfig() config.Resolved {
 		cliUser = user
 	}
 
-	return config.Resolve(host, cliUser, keyPath, password, cliPort)
+	// Prompt for password interactively if -p flag is set
+	cliPassword := ""
+	if usePassword {
+		pw, err := promptPassword()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading password: %v\n", err)
+			os.Exit(1)
+		}
+		cliPassword = pw
+	}
+
+	return config.Resolve(host, cliUser, keyPath, cliPassword, cliPort)
+}
+
+// promptPassword reads a password from the terminal without echoing.
+func promptPassword() (string, error) {
+	fmt.Fprint(os.Stderr, "SSH Password: ")
+	pw, err := term.ReadPassword(int(os.Stdin.Fd()))
+	fmt.Fprintln(os.Stderr) // newline after password input
+	if err != nil {
+		return "", err
+	}
+	return string(pw), nil
 }
 
 var versionCmd = &cobra.Command{

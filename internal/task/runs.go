@@ -116,7 +116,7 @@ func (s *RunStore) Save() error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	if err := os.MkdirAll(s.dataDir, 0755); err != nil {
+	if err := os.MkdirAll(s.dataDir, 0700); err != nil {
 		return err
 	}
 

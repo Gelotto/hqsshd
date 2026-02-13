@@ -72,7 +72,7 @@ func (r *Registry) Save() error {
 	defer r.mu.RUnlock()
 
 	// Ensure data directory exists
-	if err := os.MkdirAll(r.dataDir, 0755); err != nil {
+	if err := os.MkdirAll(r.dataDir, 0700); err != nil {
 		return err
 	}
 

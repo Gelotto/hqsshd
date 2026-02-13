@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+	"github.com/gelotto/hqsshd/internal/config"
 	"github.com/gelotto/hqsshd/internal/logging"
 )
 
@@ -81,10 +82,23 @@ func (s *Session) StartPTY() error {
 // environment (PATH, etc.) is available. The -i flag is critical because .bashrc typically
 // has an early-exit guard for non-interactive shells (case $- in *i*) ...).
 func (s *Session) buildCommand() (*exec.Cmd, error) {
-	// Get user's login shell
+	// Validate tool name (defense-in-depth; server.go also validates)
+	if s.Tool != "shell" && !config.ValidateToolName(s.Tool) {
+		return nil, fmt.Errorf("invalid tool name: %q", s.Tool)
+	}
+
+	// Get and validate user's login shell
 	shell := os.Getenv("SHELL")
 	if shell == "" {
 		shell = "/bin/bash"
+	}
+	// Verify the shell binary exists
+	if _, err := os.Stat(shell); err != nil {
+		logging.Warn("configured SHELL not found, falling back to /bin/sh",
+			"shell", shell,
+			"error", err,
+		)
+		shell = "/bin/sh"
 	}
 
 	var cmd *exec.Cmd
@@ -237,30 +251,34 @@ func (s *Session) Resize(cols, rows int) error {
 	return pty.Setsize(s.pty, size)
 }
 
-// Kill terminates the session's process
+// Kill terminates the session's process and its entire process group.
 func (s *Session) Kill() error {
 	if s.cmd == nil {
 		return nil
 	}
 
-	logging.Info("killing session process",
+	logging.Info("killing session process group",
 		"session_id", s.ID,
 		"pid", s.cmd.Pid,
 	)
 
-	// Send SIGTERM for graceful shutdown
-	if err := s.cmd.Signal(syscall.SIGTERM); err != nil {
-		// If SIGTERM fails, try SIGKILL
-		logging.Debug("SIGTERM failed, sending SIGKILL",
+	// Send SIGTERM to the entire process group for graceful shutdown.
+	// Negative PID targets the process group (setsid makes PID = PGID).
+	if err := syscall.Kill(-s.cmd.Pid, syscall.SIGTERM); err != nil {
+		// If SIGTERM fails, try SIGKILL on the process group
+		logging.Debug("SIGTERM to process group failed, sending SIGKILL",
 			"session_id", s.ID,
 			"error", err,
 		)
-		if killErr := s.cmd.Kill(); killErr != nil {
-			logging.Error("failed to kill process",
-				"session_id", s.ID,
-				"error", killErr,
-			)
-			return fmt.Errorf("failed to kill process: %w", killErr)
+		if killErr := syscall.Kill(-s.cmd.Pid, syscall.SIGKILL); killErr != nil {
+			// Final fallback: kill just the main process
+			if fallbackErr := s.cmd.Kill(); fallbackErr != nil {
+				logging.Error("failed to kill process",
+					"session_id", s.ID,
+					"error", fallbackErr,
+				)
+				return fmt.Errorf("failed to kill process: %w", fallbackErr)
+			}
 		}
 	}
 

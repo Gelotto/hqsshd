@@ -15,11 +15,16 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 
 	"gopkg.in/yaml.v3"
 )
+
+// validToolName matches safe tool names: alphanumeric, hyphens, underscores only.
+var validToolName = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 const (
 	DefaultSocketPath = "/tmp/hqssh.sock"
@@ -42,6 +47,17 @@ type Config struct {
 	// TCP port for gRPC server (0 = disabled, >0 = listen on localhost:port)
 	// Used for SSH tunnel forwarding from mobile clients
 	TCPPort int `yaml:"tcp_port"`
+
+	// Auth token for gRPC authentication (empty = no auth required).
+	// When set, clients must pass this token in the "authorization" gRPC metadata header.
+	AuthToken string `yaml:"auth_token"`
+
+	// Enable gRPC reflection (default: false). Only enable for debugging with grpcurl.
+	EnableReflection bool `yaml:"enable_reflection"`
+
+	// Enable the "shell" tool for raw command execution (default: false).
+	// WARNING: The shell tool runs arbitrary commands. Only enable on trusted systems.
+	EnableShellTool bool `yaml:"enable_shell_tool"`
 
 	// Session configuration
 	Sessions SessionConfig `yaml:"sessions"`
@@ -72,6 +88,7 @@ type SessionConfig struct {
 type TaskConfig struct {
 	MaxOutputSize  int `yaml:"max_output_size"`    // Max task output in bytes (default: 1MB)
 	MaxRunsPerTask int `yaml:"max_runs_per_task"`  // Max retained runs per task (default: 10)
+	MaxTimeout     int `yaml:"max_timeout"`        // Maximum allowed timeout in seconds (default: 3600 = 1h, 0 = no limit)
 }
 
 type ProjectConfig struct {
@@ -110,6 +127,7 @@ func DefaultConfig() *Config {
 		Tasks: TaskConfig{
 			MaxOutputSize:  1024 * 1024, // 1MB
 			MaxRunsPerTask: 10,
+			MaxTimeout:     3600, // 1 hour ceiling
 		},
 		Projects: ProjectConfig{
 			ScanDirectories: []string{
@@ -179,7 +197,7 @@ func (c *Config) Save() error {
 	}
 
 	configDir := filepath.Join(homeDir, DefaultConfigDir)
-	if err := os.MkdirAll(configDir, 0755); err != nil {
+	if err := os.MkdirAll(configDir, 0700); err != nil {
 		return err
 	}
 
@@ -195,4 +213,38 @@ func (c *Config) SaveToPath(path string) error {
 	}
 
 	return os.WriteFile(path, data, 0600)
+}
+
+// Validate checks the configuration for security issues and invalid values.
+func (c *Config) Validate() error {
+	for _, tool := range c.Tools {
+		if !validToolName.MatchString(tool.Name) {
+			return fmt.Errorf("invalid tool name %q: must match [a-zA-Z0-9_-]+", tool.Name)
+		}
+		if tool.Command != "" && !validToolName.MatchString(tool.Command) {
+			return fmt.Errorf("invalid tool command %q: must match [a-zA-Z0-9_-]+", tool.Command)
+		}
+	}
+	if c.Tasks.MaxTimeout < 0 {
+		return fmt.Errorf("tasks.max_timeout must be >= 0")
+	}
+	return nil
+}
+
+// ValidateToolName checks if a tool name contains only safe characters.
+func ValidateToolName(name string) bool {
+	return validToolName.MatchString(name)
+}
+
+// CheckFilePermissions warns if a config file is readable by group or others.
+func CheckFilePermissions(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil // File doesn't exist, no problem
+	}
+	mode := info.Mode().Perm()
+	if mode&0077 != 0 {
+		return fmt.Errorf("config file %s has permissions %04o; should be 0600 (run: chmod 600 %s)", path, mode, path)
+	}
+	return nil
 }

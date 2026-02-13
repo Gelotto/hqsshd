@@ -94,8 +94,8 @@ func (s *Store) Save() error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	// Ensure data directory exists
-	if err := os.MkdirAll(s.dataDir, 0755); err != nil {
+	// Ensure data directory exists (0700: owner-only access)
+	if err := os.MkdirAll(s.dataDir, 0700); err != nil {
 		return err
 	}
 
@@ -119,7 +119,7 @@ func (s *Store) Save() error {
 	path := filepath.Join(s.dataDir, sessionsFile)
 	tempPath := path + ".tmp"
 
-	if err := os.WriteFile(tempPath, data, 0644); err != nil {
+	if err := os.WriteFile(tempPath, data, 0600); err != nil {
 		return err
 	}
 

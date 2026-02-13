@@ -99,7 +99,7 @@ func (s *Store) Save() error {
 	defer s.mu.RUnlock()
 
 	// Ensure data directory exists
-	if err := os.MkdirAll(s.dataDir, 0755); err != nil {
+	if err := os.MkdirAll(s.dataDir, 0700); err != nil {
 		return err
 	}
 

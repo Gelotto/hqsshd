@@ -52,6 +52,7 @@ var globalConfig *Config
 
 // Load reads the config file from ~/.hqssh/config.yaml.
 // Returns empty config if file doesn't exist.
+// Warns if the config file has overly permissive permissions.
 func Load() *Config {
 	if globalConfig != nil {
 		return globalConfig
@@ -67,6 +68,16 @@ func Load() *Config {
 	}
 
 	configPath := filepath.Join(home, ".hqssh", "config.yaml")
+
+	// Check file permissions before reading (may contain passwords)
+	if info, statErr := os.Stat(configPath); statErr == nil {
+		mode := info.Mode().Perm()
+		if mode&0077 != 0 {
+			fmt.Fprintf(os.Stderr, "Warning: %s has permissions %04o (should be 0600)\n", configPath, mode)
+			fmt.Fprintf(os.Stderr, "  Fix with: chmod 600 %s\n", configPath)
+		}
+	}
+
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return globalConfig

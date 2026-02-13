@@ -36,7 +36,7 @@ func TestNewExecutor(t *testing.T) {
 	taskStore := NewStore(dir)
 	runStore := NewRunStore(dir, 0)
 
-	e := NewExecutor(taskStore, runStore, 0)
+	e := NewExecutor(taskStore, runStore, 0, 0)
 
 	if e == nil {
 		t.Fatal("NewExecutor returned nil")
@@ -53,7 +53,7 @@ func TestExecutor_RunUnknownTask(t *testing.T) {
 	dir := t.TempDir()
 	taskStore := NewStore(dir)
 	runStore := NewRunStore(dir, 0)
-	e := NewExecutor(taskStore, runStore, 0)
+	e := NewExecutor(taskStore, runStore, 0, 0)
 
 	_, err := e.Run("unknown-task-id", "/tmp")
 	if err == nil {
@@ -68,7 +68,7 @@ func TestExecutor_RunInteractiveTask(t *testing.T) {
 	dir := t.TempDir()
 	taskStore := NewStore(dir)
 	runStore := NewRunStore(dir, 0)
-	e := NewExecutor(taskStore, runStore, 0)
+	e := NewExecutor(taskStore, runStore, 0, 0)
 
 	// Create an interactive task (not supported in MVP)
 	task := taskStore.Create("interactive task", "", "claude", TaskScopeProject, "proj-1", "prompt", true, 0)
@@ -86,7 +86,7 @@ func TestExecutor_CancelUnknownRun(t *testing.T) {
 	dir := t.TempDir()
 	taskStore := NewStore(dir)
 	runStore := NewRunStore(dir, 0)
-	e := NewExecutor(taskStore, runStore, 0)
+	e := NewExecutor(taskStore, runStore, 0, 0)
 
 	err := e.Cancel("unknown-run-id")
 	if err == nil {
@@ -101,7 +101,7 @@ func TestExecutor_CancelCompletedRun(t *testing.T) {
 	dir := t.TempDir()
 	taskStore := NewStore(dir)
 	runStore := NewRunStore(dir, 0)
-	e := NewExecutor(taskStore, runStore, 0)
+	e := NewExecutor(taskStore, runStore, 0, 0)
 
 	// Create a task and completed run
 	task := taskStore.Create("test", "", "shell", TaskScopeSystem, "", "echo", false, 0)
@@ -121,7 +121,7 @@ func TestExecutor_CancelPendingRun(t *testing.T) {
 	dir := t.TempDir()
 	taskStore := NewStore(dir)
 	runStore := NewRunStore(dir, 0)
-	e := NewExecutor(taskStore, runStore, 0)
+	e := NewExecutor(taskStore, runStore, 0, 0)
 
 	// Create a task and pending run
 	task := taskStore.Create("test", "", "shell", TaskScopeSystem, "", "echo", false, 0)
@@ -143,7 +143,7 @@ func TestExecutor_GetRunningCount(t *testing.T) {
 	dir := t.TempDir()
 	taskStore := NewStore(dir)
 	runStore := NewRunStore(dir, 0)
-	e := NewExecutor(taskStore, runStore, 0)
+	e := NewExecutor(taskStore, runStore, 0, 0)
 
 	if e.GetRunningCount() != 0 {
 		t.Errorf("GetRunningCount() = %d, want 0", e.GetRunningCount())
@@ -154,7 +154,7 @@ func TestExecutor_Close(t *testing.T) {
 	dir := t.TempDir()
 	taskStore := NewStore(dir)
 	runStore := NewRunStore(dir, 0)
-	e := NewExecutor(taskStore, runStore, 0)
+	e := NewExecutor(taskStore, runStore, 0, 0)
 
 	// Should not panic on empty executor
 	e.Close()
@@ -168,7 +168,7 @@ func TestExecutor_BuildCommand_Claude(t *testing.T) {
 	dir := t.TempDir()
 	taskStore := NewStore(dir)
 	runStore := NewRunStore(dir, 0)
-	e := NewExecutor(taskStore, runStore, 0)
+	e := NewExecutor(taskStore, runStore, 0, 0)
 
 	task := &Task{
 		Tool:   "claude",
@@ -199,7 +199,7 @@ func TestExecutor_BuildCommand_Shell(t *testing.T) {
 	dir := t.TempDir()
 	taskStore := NewStore(dir)
 	runStore := NewRunStore(dir, 0)
-	e := NewExecutor(taskStore, runStore, 0)
+	e := NewExecutor(taskStore, runStore, 0, 0)
 
 	task := &Task{
 		Tool:   "shell",
@@ -228,7 +228,7 @@ func TestExecutor_BuildCommand_Aider(t *testing.T) {
 	dir := t.TempDir()
 	taskStore := NewStore(dir)
 	runStore := NewRunStore(dir, 0)
-	e := NewExecutor(taskStore, runStore, 0)
+	e := NewExecutor(taskStore, runStore, 0, 0)
 
 	task := &Task{
 		Tool:   "aider",
@@ -250,7 +250,7 @@ func TestExecutor_BuildCommand_Codex(t *testing.T) {
 	dir := t.TempDir()
 	taskStore := NewStore(dir)
 	runStore := NewRunStore(dir, 0)
-	e := NewExecutor(taskStore, runStore, 0)
+	e := NewExecutor(taskStore, runStore, 0, 0)
 
 	task := &Task{
 		Tool:   "codex",
@@ -269,7 +269,7 @@ func TestExecutor_BuildCommand_Environment(t *testing.T) {
 	dir := t.TempDir()
 	taskStore := NewStore(dir)
 	runStore := NewRunStore(dir, 0)
-	e := NewExecutor(taskStore, runStore, 0)
+	e := NewExecutor(taskStore, runStore, 0, 0)
 
 	task := &Task{
 		Tool:   "shell",
@@ -312,7 +312,7 @@ func TestExecutor_RunShellTask_Integration(t *testing.T) {
 	dir := t.TempDir()
 	taskStore := NewStore(dir)
 	runStore := NewRunStore(dir, 0)
-	e := NewExecutor(taskStore, runStore, 0)
+	e := NewExecutor(taskStore, runStore, 0, 0)
 	defer e.Close()
 
 	// Create a simple shell task
@@ -365,7 +365,7 @@ func TestExecutor_RunWithTimeout_Integration(t *testing.T) {
 	dir := t.TempDir()
 	taskStore := NewStore(dir)
 	runStore := NewRunStore(dir, 0)
-	e := NewExecutor(taskStore, runStore, 0)
+	e := NewExecutor(taskStore, runStore, 0, 0)
 	defer e.Close()
 
 	// Create a task that will timeout (sleep for 10 seconds with 1 second timeout)
@@ -412,7 +412,7 @@ func TestExecutor_PreventsDuplicateRuns(t *testing.T) {
 	dir := t.TempDir()
 	taskStore := NewStore(dir)
 	runStore := NewRunStore(dir, 0)
-	e := NewExecutor(taskStore, runStore, 0)
+	e := NewExecutor(taskStore, runStore, 0, 0)
 	defer e.Close()
 
 	// Create a slow task
@@ -453,7 +453,7 @@ func TestExecutor_InvalidWorkingDir_Integration(t *testing.T) {
 	dir := t.TempDir()
 	taskStore := NewStore(dir)
 	runStore := NewRunStore(dir, 0)
-	e := NewExecutor(taskStore, runStore, 0)
+	e := NewExecutor(taskStore, runStore, 0, 0)
 	defer e.Close()
 
 	// Create a project-scoped task with invalid path

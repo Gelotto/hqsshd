@@ -53,6 +53,27 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Check config file permissions (may contain auth_token)
+	if *configPath != "" {
+		if err := config.CheckFilePermissions(*configPath); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+		}
+	} else {
+		homeDir, _ := os.UserHomeDir()
+		if homeDir != "" {
+			defaultPath := homeDir + "/" + config.DefaultConfigDir + "/" + config.DefaultConfigFile
+			if err := config.CheckFilePermissions(defaultPath); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+			}
+		}
+	}
+
+	// Validate configuration
+	if err := cfg.Validate(); err != nil {
+		fmt.Fprintf(os.Stderr, "Invalid config: %v\n", err)
+		os.Exit(1)
+	}
+
 	// Override socket path if provided
 	if *socketPath != "" {
 		cfg.Socket = *socketPath

@@ -6,19 +6,25 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4 # Pin to SHA in production
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v5 # Pin to SHA in production
         with:
-          go-version: '1.24'
+          go-version-file: go.mod
 
       - name: Run tests
         run: go test -race ./...
 
       - name: Build
         run: go build ./...
+
+      - name: Vet
+        run: go vet ./...

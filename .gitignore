@@ -22,6 +22,12 @@ Thumbs.db
 # Data directory (created at runtime)
 .hqssh/
 
+# Config files that may contain secrets (auth tokens, passwords)
+.env
+.env.*
+daemon.yaml
+config.yaml
+
 # Test artifacts
 *.test
 *.out

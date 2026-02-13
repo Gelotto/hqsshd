@@ -21,6 +21,7 @@ import (
 	"sync"
 
 	"github.com/gelotto/hqsshd/internal/config"
+	"github.com/gelotto/hqsshd/internal/logging"
 )
 
 // Detector detects installed AI CLI tools
@@ -45,6 +46,10 @@ func (d *Detector) DetectAll() []string {
 
 	installed := make([]string, 0)
 	for _, tool := range d.config.Tools {
+		if !config.ValidateToolName(tool.Name) {
+			logging.Warn("skipping tool with invalid name", "name", tool.Name)
+			continue
+		}
 		if d.detectTool(tool) {
 			installed = append(installed, tool.Name)
 			d.cache[tool.Name] = true
@@ -84,14 +89,15 @@ func (d *Detector) IsInstalled(name string) bool {
 	return result
 }
 
-// GetCommand returns the command for a tool
+// GetCommand returns the command for a tool.
+// Returns empty string if the tool is not in the configured list.
 func (d *Detector) GetCommand(name string) string {
 	for _, t := range d.config.Tools {
 		if t.Name == name {
 			return t.Command
 		}
 	}
-	return name // Fallback to tool name as command
+	return "" // Don't echo untrusted input back as a command
 }
 
 // ClearCache clears the detection cache
@@ -101,13 +107,25 @@ func (d *Detector) ClearCache() {
 	d.cache = make(map[string]bool)
 }
 
-// detectTool runs the detection command for a tool.
-// Commands are wrapped in a login shell to ensure tools installed via
-// nvm/pyenv/asdf/cargo are available on PATH.
+// detectTool detects if a tool is installed.
+// When no custom Detect command is configured, uses exec.LookPath() which is
+// safe and doesn't invoke a shell. Custom Detect commands are wrapped in a
+// login shell to ensure tools installed via nvm/pyenv/asdf/cargo are available.
 func (d *Detector) detectTool(tool config.ToolConfig) bool {
+	// Validate tool name to prevent injection
+	if !config.ValidateToolName(tool.Name) {
+		return false
+	}
+
 	if tool.Detect == "" {
-		// Default: try "which <command>"
-		tool.Detect = "which " + tool.Command
+		// Safe default: use exec.LookPath instead of shelling out to "which"
+		_, err := exec.LookPath(tool.Command)
+		if err == nil {
+			return true
+		}
+		// Fallback: try via login shell for tools installed by nvm/pyenv/asdf
+		// that modify PATH in shell init scripts
+		return d.detectViaLoginShell(tool.Command)
 	}
 
 	if strings.TrimSpace(tool.Detect) == "" {
@@ -118,8 +136,41 @@ func (d *Detector) detectTool(tool config.ToolConfig) bool {
 	if shell == "" {
 		shell = "/bin/bash"
 	}
+	if _, err := os.Stat(shell); err != nil {
+		logging.Warn("configured SHELL not found, falling back to /bin/sh",
+			"shell", shell,
+			"error", err,
+		)
+		shell = "/bin/sh"
+	}
 
 	cmd := exec.Command(shell, "-l", "-c", tool.Detect)
+	err := cmd.Run()
+	return err == nil
+}
+
+// detectViaLoginShell tries to find a tool by running "command -v" in a login shell.
+// This catches tools installed via version managers (nvm, pyenv, asdf) that modify
+// PATH in shell init scripts.
+func (d *Detector) detectViaLoginShell(command string) bool {
+	if !config.ValidateToolName(command) {
+		return false
+	}
+
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/bash"
+	}
+	if _, err := os.Stat(shell); err != nil {
+		logging.Warn("configured SHELL not found, falling back to /bin/sh",
+			"shell", shell,
+			"error", err,
+		)
+		shell = "/bin/sh"
+	}
+
+	// Use "command -v" (POSIX builtin, safer than "which")
+	cmd := exec.Command(shell, "-l", "-c", "command -v "+command)
 	err := cmd.Run()
 	return err == nil
 }

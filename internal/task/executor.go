@@ -22,9 +22,11 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/creack/pty"
+	"github.com/gelotto/hqsshd/internal/config"
 )
 
 const (
@@ -37,6 +39,7 @@ type Executor struct {
 	taskStore     *Store
 	runStore      *RunStore
 	maxOutputSize int64 // max task output in bytes
+	maxTimeout    int   // max allowed timeout in seconds (0 = no limit)
 
 	// Track running tasks for cancellation
 	running   map[string]*runningTask
@@ -50,7 +53,8 @@ type runningTask struct {
 
 // NewExecutor creates a new task executor.
 // maxOutputSize limits captured task output in bytes (0 = default 1MB).
-func NewExecutor(taskStore *Store, runStore *RunStore, maxOutputSize int) *Executor {
+// maxTimeout is the maximum allowed timeout in seconds (0 = no limit).
+func NewExecutor(taskStore *Store, runStore *RunStore, maxOutputSize, maxTimeout int) *Executor {
 	if maxOutputSize <= 0 {
 		maxOutputSize = 1024 * 1024 // 1MB default
 	}
@@ -58,6 +62,7 @@ func NewExecutor(taskStore *Store, runStore *RunStore, maxOutputSize int) *Execu
 		taskStore:     taskStore,
 		runStore:      runStore,
 		maxOutputSize: int64(maxOutputSize),
+		maxTimeout:    maxTimeout,
 		running:       make(map[string]*runningTask),
 	}
 }
@@ -111,12 +116,12 @@ func (e *Executor) Cancel(runID string) error {
 		return fmt.Errorf("failed to cancel run")
 	}
 
-	// Cancel the context and kill the process.
+	// Cancel the context and kill the process group.
 	// Don't call cmd.Wait() here — the executeTask() goroutine handles it.
 	// Concurrent Wait() on the same exec.Cmd is undefined behavior.
 	rt.cancel()
 	if rt.cmd != nil && rt.cmd.Process != nil {
-		rt.cmd.Process.Kill()
+		syscall.Kill(-rt.cmd.Process.Pid, syscall.SIGKILL)
 	}
 
 	e.runStore.Cancel(runID)
@@ -153,11 +158,20 @@ func (e *Executor) executeTask(task *Task, run *Run, projectPath string) {
 		return
 	}
 
+	// Determine effective timeout, clamped to max ceiling
+	effectiveTimeout := task.TimeoutSeconds
+	if effectiveTimeout <= 0 && e.maxTimeout > 0 {
+		effectiveTimeout = e.maxTimeout // Apply ceiling as default when no timeout set
+	}
+	if e.maxTimeout > 0 && effectiveTimeout > e.maxTimeout {
+		effectiveTimeout = e.maxTimeout // Clamp to ceiling
+	}
+
 	// Setup timeout context
 	var ctx context.Context
 	var cancel context.CancelFunc
-	if task.TimeoutSeconds > 0 {
-		ctx, cancel = context.WithTimeout(context.Background(), time.Duration(task.TimeoutSeconds)*time.Second)
+	if effectiveTimeout > 0 {
+		ctx, cancel = context.WithTimeout(context.Background(), time.Duration(effectiveTimeout)*time.Second)
 	} else {
 		ctx, cancel = context.WithCancel(context.Background())
 	}
@@ -242,9 +256,9 @@ func (e *Executor) executeTask(task *Task, run *Run, projectPath string) {
 		}
 
 	case <-ctx.Done():
-		// Timeout or cancelled
+		// Timeout or cancelled — kill the entire process group
 		if cmd.Process != nil {
-			cmd.Process.Kill()
+			syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		}
 		// Wait for the goroutine's cmd.Wait() to complete — never call Wait() twice
 		<-cmdDone
@@ -254,7 +268,7 @@ func (e *Executor) executeTask(task *Task, run *Run, projectPath string) {
 		e.runStore.SetOutput(run.ID, output)
 
 		if ctx.Err() == context.DeadlineExceeded {
-			e.runStore.Fail(run.ID, fmt.Sprintf("task timed out after %d seconds", task.TimeoutSeconds))
+			e.runStore.Fail(run.ID, fmt.Sprintf("task timed out after %d seconds", effectiveTimeout))
 		} else {
 			e.runStore.Cancel(run.ID)
 		}
@@ -275,6 +289,10 @@ func (e *Executor) buildCommand(task *Task, workingDir string) *exec.Cmd {
 	if shell == "" {
 		shell = "/bin/bash"
 	}
+	// Verify the shell binary exists
+	if _, err := os.Stat(shell); err != nil {
+		shell = "/bin/sh"
+	}
 
 	var cmd *exec.Cmd
 
@@ -289,14 +307,21 @@ func (e *Executor) buildCommand(task *Task, workingDir string) *exec.Cmd {
 		// Aider with --yes for non-interactive
 		cmd = exec.Command(shell, "-l", "-c", `aider --yes --message "$1"`, "_", task.Prompt)
 	case "shell":
-		// Intentionally runs prompt as a command — this is the tool's purpose
+		// Intentionally runs prompt as a command — this is the tool's purpose.
+		// Requires enable_shell_tool: true in daemon config.
 		cmd = exec.Command(shell, "-l", "-c", task.Prompt)
 	default:
-		// Tool name already validated against config whitelist
-		cmd = exec.Command(shell, "-l", "-c", fmt.Sprintf(`%s "$1"`, task.Tool), "_", task.Prompt)
+		// Tool name already validated against config whitelist and regex
+		if !config.ValidateToolName(task.Tool) {
+			// Defensive: should never reach here since server validates first
+			cmd = exec.Command("false") // Safe no-op that exits 1
+		} else {
+			cmd = exec.Command(shell, "-l", "-c", fmt.Sprintf(`%s "$1"`, task.Tool), "_", task.Prompt)
+		}
 	}
 
 	cmd.Dir = workingDir
+
 	cmd.Env = append(os.Environ(),
 		"TERM=xterm-256color",
 		fmt.Sprintf("COLUMNS=%d", defaultCols),
@@ -330,7 +355,8 @@ func (e *Executor) Close() {
 	for runID, rt := range snapshot {
 		rt.cancel()
 		if rt.cmd != nil && rt.cmd.Process != nil {
-			rt.cmd.Process.Kill()
+			// Kill the entire process group
+			syscall.Kill(-rt.cmd.Process.Pid, syscall.SIGKILL)
 		}
 		e.runStore.Cancel(runID)
 	}
