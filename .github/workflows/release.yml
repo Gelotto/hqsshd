@@ -29,7 +29,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version-file: go.mod
 
       - name: Get version from tag
         id: version
@@ -87,8 +87,21 @@ jobs:
           files: |
             artifacts/hqsshd-*.tar.gz
             artifacts/checksums.txt
+            scripts/install.sh
           body: |
-            ## Install
+            ## Quick Install
+
+            ```bash
+            curl -fsSL https://hqssh.com/install | sh
+            ```
+
+            Or pin this version:
+
+            ```bash
+            curl -fsSL https://hqssh.com/install | HQSSH_VERSION=${{ github.ref_name }} sh
+            ```
+
+            ## Manual Install
 
             Download the archive for your platform, extract, and move the binaries to your PATH:
 
@@ -96,7 +109,7 @@ jobs:
             # Example for Linux amd64
             curl -LO https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/hqsshd-linux-amd64.tar.gz
             tar xzf hqsshd-linux-amd64.tar.gz
-            sudo mv hqsshd hqssh /usr/local/bin/
+            mv hqsshd hqssh ~/.local/bin/
             ```
 
             Verify installation:

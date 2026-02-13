@@ -33,7 +33,27 @@ hqsshd provides session persistence and multi-client access for AI coding assist
                             └─────────────────┘
 ```
 
-## Installation
+## Quick Install
+
+```bash
+curl -fsSL https://hqssh.com/install | sh
+```
+
+This downloads the latest release, verifies the checksum, installs both binaries (`hqsshd` + `hqssh`), and sets up a systemd user service. Re-run to update.
+
+To pin a specific version:
+
+```bash
+curl -fsSL https://hqssh.com/install | HQSSH_VERSION=v0.3.0 sh
+```
+
+To uninstall:
+
+```bash
+curl -fsSL https://hqssh.com/install | sh -s -- --uninstall
+```
+
+## Manual Installation
 
 ### Prebuilt Binaries
 
@@ -68,7 +88,7 @@ hqsshd --version
 
 ### From Source
 
-Requires Go 1.24+:
+Requires Go 1.25+:
 
 ```bash
 git clone https://github.com/gelotto/hqsshd.git
