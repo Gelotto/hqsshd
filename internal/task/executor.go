@@ -245,10 +245,10 @@ func (e *Executor) executeTask(task *Task, run *Run, projectPath string) {
 		// Timeout or cancelled
 		if cmd.Process != nil {
 			cmd.Process.Kill()
-			// Wait for process to actually exit to avoid orphaned processes
-			cmd.Wait()
 		}
-		<-outputDone // Wait for output to be captured
+		// Wait for the goroutine's cmd.Wait() to complete — never call Wait() twice
+		<-cmdDone
+		<-outputDone
 
 		output := outputBuf.String()
 		e.runStore.SetOutput(run.ID, output)

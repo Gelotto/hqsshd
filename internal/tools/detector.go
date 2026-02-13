@@ -43,7 +43,7 @@ func (d *Detector) DetectAll() []string {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	var installed []string
+	installed := make([]string, 0)
 	for _, tool := range d.config.Tools {
 		if d.detectTool(tool) {
 			installed = append(installed, tool.Name)
