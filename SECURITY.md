@@ -12,7 +12,7 @@ If you discover a security vulnerability in hqsshd, please report it responsibly
 
 **Do NOT open a public GitHub issue for security vulnerabilities.**
 
-Instead, please email: **security@gelotto.io**
+Instead, please email: **admin@gelotto.io**
 
 Include:
 - Description of the vulnerability
