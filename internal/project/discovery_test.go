@@ -225,6 +225,40 @@ func TestDiscovery_Discover_CustomDirectories(t *testing.T) {
 	}
 }
 
+func TestDiscovery_Discover_RootDirectoryWithRepos(t *testing.T) {
+	// Simulates ~ being in the scan list: the scan root itself contains
+	// git repos as direct children alongside non-repo directories.
+	root := t.TempDir()
+
+	repo1 := filepath.Join(root, "myapp")
+	repo2 := filepath.Join(root, "dotfiles")
+	notRepo := filepath.Join(root, "Downloads")
+
+	os.MkdirAll(repo1, 0755)
+	os.MkdirAll(repo2, 0755)
+	os.MkdirAll(notRepo, 0755)
+
+	createTestGitRepo(t, repo1)
+	createTestGitRepo(t, repo2)
+
+	cfg := config.DefaultConfig()
+	cfg.Projects.ScanDirectories = []string{root}
+	cfg.Projects.MaxDepth = 1
+	detector := tools.NewDetector(cfg)
+	d := NewDiscovery(cfg, detector)
+
+	projects, scanned, err := d.Discover(nil, 0)
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	if len(projects) != 2 {
+		t.Errorf("Discover() returned %d projects, want 2", len(projects))
+	}
+	if scanned < 2 {
+		t.Errorf("scanned = %d, want >= 2", scanned)
+	}
+}
+
 func TestDiscovery_CreateFromPath(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(root, "myproject")

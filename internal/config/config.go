@@ -131,6 +131,7 @@ func DefaultConfig() *Config {
 		},
 		Projects: ProjectConfig{
 			ScanDirectories: []string{
+				homeDir,
 				filepath.Join(homeDir, "projects"),
 				filepath.Join(homeDir, "code"),
 				filepath.Join(homeDir, "repos"),
