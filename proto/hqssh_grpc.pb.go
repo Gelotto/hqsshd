@@ -452,6 +452,7 @@ const (
 	SessionService_GetSessionLog_FullMethodName          = "/hqssh.SessionService/GetSessionLog"
 	SessionService_ListHistoricalSessions_FullMethodName = "/hqssh.SessionService/ListHistoricalSessions"
 	SessionService_WatchEvents_FullMethodName            = "/hqssh.SessionService/WatchEvents"
+	SessionService_ListEvents_FullMethodName             = "/hqssh.SessionService/ListEvents"
 )
 
 // SessionServiceClient is the client API for SessionService service.
@@ -482,6 +483,8 @@ type SessionServiceClient interface {
 	// Used by clients to show agent-attention notifications without being
 	// attached to every session.
 	WatchEvents(ctx context.Context, in *WatchEventsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[SessionEvent], error)
+	// List recent session events, newest first (agent activity feed)
+	ListEvents(ctx context.Context, in *ListEventsRequest, opts ...grpc.CallOption) (*ListEventsResponse, error)
 }
 
 type sessionServiceClient struct {
@@ -632,6 +635,16 @@ func (c *sessionServiceClient) WatchEvents(ctx context.Context, in *WatchEventsR
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type SessionService_WatchEventsClient = grpc.ServerStreamingClient[SessionEvent]
 
+func (c *sessionServiceClient) ListEvents(ctx context.Context, in *ListEventsRequest, opts ...grpc.CallOption) (*ListEventsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListEventsResponse)
+	err := c.cc.Invoke(ctx, SessionService_ListEvents_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SessionServiceServer is the server API for SessionService service.
 // All implementations must embed UnimplementedSessionServiceServer
 // for forward compatibility.
@@ -660,6 +673,8 @@ type SessionServiceServer interface {
 	// Used by clients to show agent-attention notifications without being
 	// attached to every session.
 	WatchEvents(*WatchEventsRequest, grpc.ServerStreamingServer[SessionEvent]) error
+	// List recent session events, newest first (agent activity feed)
+	ListEvents(context.Context, *ListEventsRequest) (*ListEventsResponse, error)
 	mustEmbedUnimplementedSessionServiceServer()
 }
 
@@ -702,6 +717,9 @@ func (UnimplementedSessionServiceServer) ListHistoricalSessions(context.Context,
 }
 func (UnimplementedSessionServiceServer) WatchEvents(*WatchEventsRequest, grpc.ServerStreamingServer[SessionEvent]) error {
 	return status.Error(codes.Unimplemented, "method WatchEvents not implemented")
+}
+func (UnimplementedSessionServiceServer) ListEvents(context.Context, *ListEventsRequest) (*ListEventsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListEvents not implemented")
 }
 func (UnimplementedSessionServiceServer) mustEmbedUnimplementedSessionServiceServer() {}
 func (UnimplementedSessionServiceServer) testEmbeddedByValue()                        {}
@@ -890,6 +908,24 @@ func _SessionService_WatchEvents_Handler(srv interface{}, stream grpc.ServerStre
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type SessionService_WatchEventsServer = grpc.ServerStreamingServer[SessionEvent]
 
+func _SessionService_ListEvents_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListEventsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SessionServiceServer).ListEvents(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SessionService_ListEvents_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SessionServiceServer).ListEvents(ctx, req.(*ListEventsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SessionService_ServiceDesc is the grpc.ServiceDesc for SessionService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -924,6 +960,10 @@ var SessionService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListHistoricalSessions",
 			Handler:    _SessionService_ListHistoricalSessions_Handler,
+		},
+		{
+			MethodName: "ListEvents",
+			Handler:    _SessionService_ListEvents_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

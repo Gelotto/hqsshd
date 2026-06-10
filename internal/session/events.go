@@ -55,13 +55,18 @@ type Event struct {
 	Timestamp   time.Time
 }
 
-// EventHub fans session events out to subscribers.
+// maxRecentEvents bounds the in-memory event history ring buffer.
+const maxRecentEvents = 100
+
+// EventHub fans session events out to subscribers and keeps a bounded
+// in-memory history for activity-feed queries.
 //
 // Subscribers receive on buffered channels; events are dropped (not blocked
 // on) if a subscriber is slow, since events are advisory notifications.
 type EventHub struct {
 	mu          sync.RWMutex
 	subscribers map[string]chan Event
+	recent      []Event // oldest first, capped at maxRecentEvents
 }
 
 // NewEventHub creates an empty event hub.
@@ -100,11 +105,16 @@ func (h *EventHub) Unsubscribe(id string) {
 	}
 }
 
-// Publish delivers an event to all subscribers, dropping it for any
-// subscriber whose buffer is full.
+// Publish records an event in the history and delivers it to all
+// subscribers, dropping it for any subscriber whose buffer is full.
 func (h *EventHub) Publish(event Event) {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.recent = append(h.recent, event)
+	if len(h.recent) > maxRecentEvents {
+		h.recent = h.recent[len(h.recent)-maxRecentEvents:]
+	}
 
 	for id, ch := range h.subscribers {
 		select {
@@ -124,4 +134,23 @@ func (h *EventHub) SubscriberCount() int {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return len(h.subscribers)
+}
+
+// Recent returns up to limit recent events, newest first.
+// limit <= 0 returns all retained events.
+func (h *EventHub) Recent(limit int) []Event {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	n := len(h.recent)
+	if limit <= 0 || limit > n {
+		limit = n
+	}
+
+	// Copy newest-first
+	result := make([]Event, limit)
+	for i := 0; i < limit; i++ {
+		result[i] = h.recent[n-1-i]
+	}
+	return result
 }

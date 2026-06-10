@@ -852,6 +852,19 @@ func (s *sessionService) WatchEvents(req *pb.WatchEventsRequest, stream pb.Sessi
 	}
 }
 
+// ListEvents returns recent session events, newest first, for the agent
+// activity feed.
+func (s *sessionService) ListEvents(ctx context.Context, req *pb.ListEventsRequest) (*pb.ListEventsResponse, error) {
+	events := s.server.sessionManager.Events().Recent(int(req.GetLimit()))
+
+	pbEvents := make([]*pb.SessionEvent, len(events))
+	for i, e := range events {
+		pbEvents[i] = sessionEventToProto(e)
+	}
+
+	return &pb.ListEventsResponse{Events: pbEvents}, nil
+}
+
 // sessionEventToProto converts a session.Event to its protobuf form
 func sessionEventToProto(e session.Event) *pb.SessionEvent {
 	var t pb.SessionEventType

@@ -130,6 +130,41 @@ func TestEventHub(t *testing.T) {
 	}
 }
 
+func TestEventHubRecent(t *testing.T) {
+	hub := NewEventHub()
+
+	if got := hub.Recent(0); len(got) != 0 {
+		t.Fatalf("Recent(0) on empty hub = %d events, want 0", len(got))
+	}
+
+	// Publish more than the cap; history must stay bounded and ordered
+	for i := 0; i < maxRecentEvents+20; i++ {
+		hub.Publish(Event{
+			SessionID: "s",
+			Type:      EventTypeBell,
+			Timestamp: time.Unix(int64(i), 0),
+		})
+	}
+
+	all := hub.Recent(0)
+	if len(all) != maxRecentEvents {
+		t.Fatalf("Recent(0) = %d events, want %d", len(all), maxRecentEvents)
+	}
+	// Newest first: first entry has the largest timestamp
+	if !all[0].Timestamp.After(all[1].Timestamp) {
+		t.Errorf("Recent not newest-first: %v then %v",
+			all[0].Timestamp, all[1].Timestamp)
+	}
+
+	limited := hub.Recent(5)
+	if len(limited) != 5 {
+		t.Fatalf("Recent(5) = %d events, want 5", len(limited))
+	}
+	if !limited[0].Timestamp.Equal(all[0].Timestamp) {
+		t.Error("Recent(5) does not start with the newest event")
+	}
+}
+
 func TestSessionEmitsEndedEvent(t *testing.T) {
 	hub := NewEventHub()
 	_, ch := hub.Subscribe()
