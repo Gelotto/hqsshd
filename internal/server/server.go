@@ -35,6 +35,7 @@ import (
 
 	"github.com/gelotto/hqsshd/internal/config"
 	"github.com/gelotto/hqsshd/internal/logging"
+	"github.com/gelotto/hqsshd/internal/notify"
 	"github.com/gelotto/hqsshd/internal/project"
 	"github.com/gelotto/hqsshd/internal/session"
 	"github.com/gelotto/hqsshd/internal/task"
@@ -56,6 +57,7 @@ type Server struct {
 	taskStore      *task.Store
 	taskRunStore   *task.RunStore
 	taskExecutor   *task.Executor
+	webhook        *notify.WebhookNotifier // nil when events.webhook_url unset
 	dataDir        string
 	startupTime    int64
 }
@@ -103,6 +105,13 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	// Create task executor
 	taskExecutor := task.NewExecutor(taskStore, taskRunStore, cfg.Tasks.MaxOutputSize, cfg.Tasks.MaxTimeout)
 
+	// Push session events to a webhook (e.g. ntfy) when configured
+	var webhook *notify.WebhookNotifier
+	if cfg.Events.WebhookURL != "" {
+		webhook = notify.NewWebhookNotifier(cfg.Events.WebhookURL)
+		webhook.Start(sessionMgr.Events())
+	}
+
 	return &Server{
 		config:         cfg,
 		detector:       detector,
@@ -112,6 +121,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		taskStore:      taskStore,
 		taskRunStore:   taskRunStore,
 		taskExecutor:   taskExecutor,
+		webhook:        webhook,
 		dataDir:        dataDir,
 		startupTime:    time.Now().Unix(),
 	}, nil
@@ -225,6 +235,11 @@ func (s *Server) Start() error {
 
 // Stop gracefully stops the server
 func (s *Server) Stop() {
+	// Stop webhook delivery first (sessions closing below emit ENDED events)
+	if s.webhook != nil {
+		s.webhook.Stop()
+	}
+
 	// Close task executor first (cancels all running tasks)
 	if s.taskExecutor != nil {
 		s.taskExecutor.Close()
