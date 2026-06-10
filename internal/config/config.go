@@ -73,6 +73,19 @@ type Config struct {
 
 	// Logging configuration
 	Log LogConfig `yaml:"log"`
+
+	// Event notification configuration
+	Events EventsConfig `yaml:"events"`
+}
+
+// EventsConfig controls push delivery of session events (bell, ended).
+type EventsConfig struct {
+	// WebhookURL receives an HTTP POST for every session event. The body is
+	// plain text ("<session> needs attention" / "<session> ended") with
+	// ntfy-compatible Title/Priority/Tags headers, so pointing this at an
+	// https://ntfy.sh/<topic> URL delivers push notifications to a phone
+	// even when the HQSSH app is not running. Empty = disabled.
+	WebhookURL string `yaml:"webhook_url"`
 }
 
 type SessionConfig struct {

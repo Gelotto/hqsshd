@@ -146,6 +146,14 @@ service SessionService {
 
   // List historical sessions (ended sessions with logs available)
   rpc ListHistoricalSessions(ListHistoricalSessionsRequest) returns (ListHistoricalSessionsResponse);
+
+  // Watch session events across all sessions (bell rung, session ended).
+  // Used by clients to show agent-attention notifications without being
+  // attached to every session.
+  rpc WatchEvents(WatchEventsRequest) returns (stream SessionEvent);
+
+  // List recent session events, newest first (agent activity feed)
+  rpc ListEvents(ListEventsRequest) returns (ListEventsResponse);
 }
 
 message Session {
@@ -216,6 +224,31 @@ message ResizeRequest {
   string session_id = 1;
   int32 cols = 2;
   int32 rows = 3;
+}
+
+message WatchEventsRequest {}
+
+enum SessionEventType {
+  SESSION_EVENT_TYPE_UNSPECIFIED = 0;
+  SESSION_EVENT_TYPE_BELL = 1;      // Terminal bell outside escape sequences
+                                    // (AI tool finished or needs input)
+  SESSION_EVENT_TYPE_ENDED = 2;     // Session process exited
+}
+
+message SessionEvent {
+  string session_id = 1;
+  string session_name = 2;
+  string tool = 3;
+  SessionEventType type = 4;
+  int64 timestamp = 5;              // Unix timestamp
+}
+
+message ListEventsRequest {
+  int32 limit = 1;                  // Max events to return (0 = all retained)
+}
+
+message ListEventsResponse {
+  repeated SessionEvent events = 1; // Newest first
 }
 
 message GetScrollbackRequest {

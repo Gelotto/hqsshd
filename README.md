@@ -154,16 +154,23 @@ hqssh attach <session-id> -H myserver.com -u myuser
 Default config location: `~/.hqssh/daemon.yaml`
 
 ```yaml
-# Session settings
-session:
-  idle_timeout_sec: 3600    # Kill idle sessions after 1 hour (0 = disabled)
-  max_sessions: 10          # Maximum concurrent sessions
-  history_lines: 10000      # Scrollback buffer size
-
 # Server settings
-server:
-  socket_path: /tmp/hqssh.sock  # Unix socket for local tools
-  tcp_port: 50051               # TCP port for SSH tunnel access
+socket: /tmp/hqssh.sock     # Unix socket for local tools
+tcp_port: 50051             # TCP port for SSH tunnel access (0 = disabled)
+
+# Session settings
+sessions:
+  idle_timeout: 86400       # Kill idle sessions after 24 hours (0 = disabled)
+  max_sessions: 20          # Maximum concurrent sessions
+  history_size: 10000       # Scrollback buffer size (lines)
+
+# Push notifications for session events (bell rung, session ended).
+# Point webhook_url at an https://ntfy.sh/<your-topic> URL and install the
+# ntfy app to get phone push when an AI agent needs attention — even when
+# the HQSSH app is closed. Works with any HTTP receiver (ntfy-compatible
+# Title/Priority/Tags headers + X-HQSSH-* headers for custom relays).
+events:
+  webhook_url: ""           # Empty = disabled
 ```
 
 ## Security

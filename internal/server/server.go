@@ -35,6 +35,7 @@ import (
 
 	"github.com/gelotto/hqsshd/internal/config"
 	"github.com/gelotto/hqsshd/internal/logging"
+	"github.com/gelotto/hqsshd/internal/notify"
 	"github.com/gelotto/hqsshd/internal/project"
 	"github.com/gelotto/hqsshd/internal/session"
 	"github.com/gelotto/hqsshd/internal/task"
@@ -56,6 +57,7 @@ type Server struct {
 	taskStore      *task.Store
 	taskRunStore   *task.RunStore
 	taskExecutor   *task.Executor
+	webhook        *notify.WebhookNotifier // nil when events.webhook_url unset
 	dataDir        string
 	startupTime    int64
 }
@@ -103,6 +105,13 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	// Create task executor
 	taskExecutor := task.NewExecutor(taskStore, taskRunStore, cfg.Tasks.MaxOutputSize, cfg.Tasks.MaxTimeout)
 
+	// Push session events to a webhook (e.g. ntfy) when configured
+	var webhook *notify.WebhookNotifier
+	if cfg.Events.WebhookURL != "" {
+		webhook = notify.NewWebhookNotifier(cfg.Events.WebhookURL)
+		webhook.Start(sessionMgr.Events())
+	}
+
 	return &Server{
 		config:         cfg,
 		detector:       detector,
@@ -112,6 +121,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		taskStore:      taskStore,
 		taskRunStore:   taskRunStore,
 		taskExecutor:   taskExecutor,
+		webhook:        webhook,
 		dataDir:        dataDir,
 		startupTime:    time.Now().Unix(),
 	}, nil
@@ -225,6 +235,11 @@ func (s *Server) Start() error {
 
 // Stop gracefully stops the server
 func (s *Server) Stop() {
+	// Stop webhook delivery first (sessions closing below emit ENDED events)
+	if s.webhook != nil {
+		s.webhook.Stop()
+	}
+
 	// Close task executor first (cancels all running tasks)
 	if s.taskExecutor != nil {
 		s.taskExecutor.Close()
@@ -826,6 +841,63 @@ func (s *sessionService) ListHistoricalSessions(ctx context.Context, req *pb.Lis
 	return &pb.ListHistoricalSessionsResponse{
 		Sessions: pbSessions,
 	}, nil
+}
+
+// WatchEvents streams session events (bell rung, session ended) to the
+// client until it disconnects. Used by the mobile app to show agent
+// notifications for sessions it is not attached to.
+func (s *sessionService) WatchEvents(req *pb.WatchEventsRequest, stream pb.SessionService_WatchEventsServer) error {
+	hub := s.server.sessionManager.Events()
+	id, ch := hub.Subscribe()
+	defer hub.Unsubscribe(id)
+
+	ctx := stream.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case event, ok := <-ch:
+			if !ok {
+				return nil
+			}
+			if err := stream.Send(sessionEventToProto(event)); err != nil {
+				return status.Errorf(codes.Internal, "failed to send event: %v", err)
+			}
+		}
+	}
+}
+
+// ListEvents returns recent session events, newest first, for the agent
+// activity feed.
+func (s *sessionService) ListEvents(ctx context.Context, req *pb.ListEventsRequest) (*pb.ListEventsResponse, error) {
+	events := s.server.sessionManager.Events().Recent(int(req.GetLimit()))
+
+	pbEvents := make([]*pb.SessionEvent, len(events))
+	for i, e := range events {
+		pbEvents[i] = sessionEventToProto(e)
+	}
+
+	return &pb.ListEventsResponse{Events: pbEvents}, nil
+}
+
+// sessionEventToProto converts a session.Event to its protobuf form
+func sessionEventToProto(e session.Event) *pb.SessionEvent {
+	var t pb.SessionEventType
+	switch e.Type {
+	case session.EventTypeBell:
+		t = pb.SessionEventType_SESSION_EVENT_TYPE_BELL
+	case session.EventTypeEnded:
+		t = pb.SessionEventType_SESSION_EVENT_TYPE_ENDED
+	default:
+		t = pb.SessionEventType_SESSION_EVENT_TYPE_UNSPECIFIED
+	}
+	return &pb.SessionEvent{
+		SessionId:   e.SessionID,
+		SessionName: e.SessionName,
+		Tool:        e.Tool,
+		Type:        t,
+		Timestamp:   e.Timestamp.Unix(),
+	}
 }
 
 // lastNLines returns the last n lines from a byte slice

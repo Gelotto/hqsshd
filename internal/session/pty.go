@@ -209,9 +209,19 @@ func (s *Session) readPTYOutput() {
 
 			// Broadcast to all clients
 			s.broadcast(data)
+
+			// Emit attention event on bare terminal bell (AI CLIs ring it
+			// when finished or awaiting input), rate-limited per session
+			if s.bell.process(data) && time.Since(s.lastBellEvent) >= bellEventCooldown {
+				s.lastBellEvent = time.Now()
+				s.emitEvent(EventTypeBell)
+			}
 		}
 	}
 }
+
+// bellEventCooldown limits how often a session emits bell events.
+const bellEventCooldown = 5 * time.Second
 
 // Write sends input to the PTY
 func (s *Session) Write(data []byte) (int, error) {
