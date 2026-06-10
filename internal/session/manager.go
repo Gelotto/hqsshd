@@ -43,6 +43,9 @@ type Manager struct {
 	store        *Store // Session metadata persistence
 	logDir       string // Directory for session logs
 	retentionDays int   // Days to keep ended session logs (0 = forever)
+
+	// Event fan-out for watchers (mobile app notifications)
+	events *EventHub
 }
 
 // NewManager creates a new session manager
@@ -90,6 +93,7 @@ func NewManager(idleTimeoutSec, maxSessions, historySize int, dataDir, logDir st
 		store:            store,
 		logDir:           logDir,
 		retentionDays:    retentionDays,
+		events:           NewEventHub(),
 	}
 
 	// Mark any previously "running" or "idle" sessions as ended (daemon restart)
@@ -112,6 +116,11 @@ func NewManager(idleTimeoutSec, maxSessions, historySize int, dataDir, logDir st
 	go m.cleanupLoop()
 
 	return m
+}
+
+// Events returns the manager's session event hub for watchers
+func (m *Manager) Events() *EventHub {
+	return m.events
 }
 
 // cleanupLoop periodically cleans up ended or idle sessions
@@ -230,6 +239,7 @@ func (m *Manager) Create(projectID, tool, workingDir, name string, args []string
 
 	// Create session with config-based buffer size
 	sess := NewSession(projectID, tool, workingDir, name, args, cols, rows, m.maxBufferSize)
+	sess.SetEventCallback(m.events.Publish)
 
 	// Create session logger for persistent output
 	logger, err := NewSessionLogger(sess.ID, m.logDir)

@@ -93,6 +93,12 @@ type Session struct {
 	// Persistent logging (writes to disk for history preservation)
 	logger *SessionLogger
 
+	// Event emission (set by Manager via SetEventCallback; may be nil).
+	// bell and lastBellEvent are only touched by the PTY reader goroutine.
+	onEvent       func(Event)
+	bell          bellDetector
+	lastBellEvent time.Time
+
 	// Lifecycle management
 	done      chan struct{}
 	doneOnce  sync.Once
@@ -208,6 +214,26 @@ func (s *Session) SetLogger(logger *SessionLogger) {
 	s.logger = logger
 }
 
+// SetEventCallback sets the callback invoked for session events (bell, end).
+// Must be called before StartPTY.
+func (s *Session) SetEventCallback(fn func(Event)) {
+	s.onEvent = fn
+}
+
+// emitEvent invokes the event callback with a snapshot of session identity
+func (s *Session) emitEvent(t EventType) {
+	if s.onEvent == nil {
+		return
+	}
+	s.onEvent(Event{
+		SessionID:   s.ID,
+		SessionName: s.Name,
+		Tool:        s.Tool,
+		Type:        t,
+		Timestamp:   time.Now(),
+	})
+}
+
 // GetLogger returns the session logger (may be nil)
 func (s *Session) GetLogger() *SessionLogger {
 	return s.logger
@@ -229,6 +255,7 @@ func (s *Session) markDone() {
 		)
 
 		close(s.done)
+		s.emitEvent(EventTypeEnded)
 	})
 }
 

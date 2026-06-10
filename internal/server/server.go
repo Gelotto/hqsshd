@@ -828,6 +828,50 @@ func (s *sessionService) ListHistoricalSessions(ctx context.Context, req *pb.Lis
 	}, nil
 }
 
+// WatchEvents streams session events (bell rung, session ended) to the
+// client until it disconnects. Used by the mobile app to show agent
+// notifications for sessions it is not attached to.
+func (s *sessionService) WatchEvents(req *pb.WatchEventsRequest, stream pb.SessionService_WatchEventsServer) error {
+	hub := s.server.sessionManager.Events()
+	id, ch := hub.Subscribe()
+	defer hub.Unsubscribe(id)
+
+	ctx := stream.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case event, ok := <-ch:
+			if !ok {
+				return nil
+			}
+			if err := stream.Send(sessionEventToProto(event)); err != nil {
+				return status.Errorf(codes.Internal, "failed to send event: %v", err)
+			}
+		}
+	}
+}
+
+// sessionEventToProto converts a session.Event to its protobuf form
+func sessionEventToProto(e session.Event) *pb.SessionEvent {
+	var t pb.SessionEventType
+	switch e.Type {
+	case session.EventTypeBell:
+		t = pb.SessionEventType_SESSION_EVENT_TYPE_BELL
+	case session.EventTypeEnded:
+		t = pb.SessionEventType_SESSION_EVENT_TYPE_ENDED
+	default:
+		t = pb.SessionEventType_SESSION_EVENT_TYPE_UNSPECIFIED
+	}
+	return &pb.SessionEvent{
+		SessionId:   e.SessionID,
+		SessionName: e.SessionName,
+		Tool:        e.Tool,
+		Type:        t,
+		Timestamp:   e.Timestamp.Unix(),
+	}
+}
+
 // lastNLines returns the last n lines from a byte slice
 func lastNLines(data []byte, n int) []byte {
 	if len(data) == 0 || n <= 0 {
