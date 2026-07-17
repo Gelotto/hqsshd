@@ -197,6 +197,11 @@ func (s *Session) readPTYOutput() {
 			// Add to scrollback buffer (in-memory, for fast attach)
 			s.appendToBuffer(data)
 
+			// Track DEC private mode state (alt buffer, mouse tracking) so
+			// attach replay can restore it after the buffer trims the
+			// original sequences
+			s.modes.process(data)
+
 			// Persist to disk (if logger is set)
 			if s.logger != nil {
 				if _, err := s.logger.Write(data); err != nil {

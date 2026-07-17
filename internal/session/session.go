@@ -99,6 +99,9 @@ type Session struct {
 	bell          bellDetector
 	lastBellEvent time.Time
 
+	// Terminal mode state for attach replay (internally synchronized)
+	modes modeTracker
+
 	// Lifecycle management
 	done      chan struct{}
 	doneOnce  sync.Once
@@ -360,6 +363,13 @@ func (s *Session) RemoveClient(clientID string) {
 			)
 		}
 	}
+}
+
+// ModePreamble returns escape sequences restoring the session's current DEC
+// private mode state (alt buffer, mouse tracking, bracketed paste, ...) for
+// clients attaching after those sequences were trimmed from the scrollback.
+func (s *Session) ModePreamble() []byte {
+	return s.modes.preamble()
 }
 
 // GetScrollback returns the output buffer for client catch-up

@@ -357,8 +357,14 @@ func (m *Manager) Attach(sessionID string, cols, rows int) (string, <-chan []byt
 		}
 	}
 
-	// Get scrollback before attaching (for catch-up)
+	// Get scrollback before attaching (for catch-up). The mode preamble is
+	// snapshotted first: a mode change landing between the two snapshots is
+	// then applied twice (idempotent) rather than missed entirely.
+	preamble := sess.ModePreamble()
 	scrollback := sess.GetScrollback()
+	if len(preamble) > 0 {
+		scrollback = append(preamble, scrollback...)
+	}
 
 	// Add client with configurable buffer size
 	outputCh := sess.AddClient(clientID, m.clientBufferSize)
