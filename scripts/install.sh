@@ -7,7 +7,7 @@
 # Environment variables:
 #   HQSSH_VERSION      Pin a specific version (e.g. v0.3.0). Default: latest.
 #   HQSSH_INSTALL_DIR  Override install directory. Default: ~/.local/bin
-#   HQSSH_NO_SERVICE   Set to 1 to skip systemd service setup.
+#   HQSSH_NO_SERVICE   Set to 1 to skip systemd/launchd service setup.
 #   HQSSH_NO_START     Set to 1 to skip starting the service after install.
 #
 # Re-run this script to update. Pass --uninstall to remove.
@@ -22,6 +22,8 @@ INSTALL_DIR="${HQSSH_INSTALL_DIR:-$HOME/.local/bin}"
 SERVICE_NAME="hqsshd"
 SERVICE_DIR="$HOME/.config/systemd/user"
 SERVICE_FILE="$SERVICE_DIR/$SERVICE_NAME.service"
+LAUNCHD_LABEL="com.gelotto.hqsshd"
+LAUNCHD_PLIST="$HOME/Library/LaunchAgents/${LAUNCHD_LABEL}.plist"
 TMPDIR_BASE="${TMPDIR:-/tmp}"
 
 # ---------------------------------------------------------------------------
@@ -208,11 +210,17 @@ install_binaries() {
 }
 
 install_service() {
-    if [ "$OS" != "linux" ]; then return; fi
     if [ "${HQSSH_NO_SERVICE:-}" = "1" ]; then
         info "Skipping service setup (HQSSH_NO_SERVICE=1)"
         return
     fi
+    case "$OS" in
+        linux)  install_service_systemd ;;
+        darwin) install_service_launchd ;;
+    esac
+}
+
+install_service_systemd() {
     if ! command -v systemctl >/dev/null 2>&1; then
         warn "systemctl not found — skipping service setup"
         warn "Run hqsshd manually: $INSTALL_DIR/hqsshd"
@@ -253,13 +261,66 @@ UNIT
     info "Installed systemd service: $SERVICE_FILE"
 }
 
+install_service_launchd() {
+    if ! command -v launchctl >/dev/null 2>&1; then
+        warn "launchctl not found — skipping service setup"
+        warn "Run hqsshd manually: $INSTALL_DIR/hqsshd"
+        return
+    fi
+
+    mkdir -p "$HOME/Library/LaunchAgents"
+    mkdir -p "$HOME/.hqssh/logs"
+
+    cat > "$LAUNCHD_PLIST" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>${LAUNCHD_LABEL}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>${INSTALL_DIR}/hqsshd</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>${HOME}/.hqssh/logs/hqsshd.log</string>
+    <key>StandardErrorPath</key>
+    <string>${HOME}/.hqssh/logs/hqsshd.log</string>
+    <key>WorkingDirectory</key>
+    <string>${HOME}</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>${HOME}</string>
+    </dict>
+</dict>
+</plist>
+PLIST
+
+    chmod 644 "$LAUNCHD_PLIST"
+    info "Installed launchd agent: $LAUNCHD_PLIST"
+}
+
 start_service() {
-    if [ "$OS" != "linux" ]; then return; fi
     if [ "${HQSSH_NO_SERVICE:-}" = "1" ]; then return; fi
     if [ "${HQSSH_NO_START:-}" = "1" ]; then
         info "Skipping service start (HQSSH_NO_START=1)"
         return
     fi
+    case "$OS" in
+        linux)  start_service_systemd ;;
+        darwin) start_service_launchd ;;
+    esac
+}
+
+start_service_systemd() {
     if ! command -v systemctl >/dev/null 2>&1; then return; fi
 
     # Ensure XDG_RUNTIME_DIR is set (may be missing in SSH sessions)
@@ -276,6 +337,33 @@ start_service() {
 
     systemctl --user enable "$SERVICE_NAME" 2>/dev/null
     systemctl --user restart "$SERVICE_NAME"
+    info "Service started"
+}
+
+start_service_launchd() {
+    if ! command -v launchctl >/dev/null 2>&1; then return; fi
+    [ -f "$LAUNCHD_PLIST" ] || return
+
+    _uid="$(id -u)"
+
+    # Unload any prior instance so the new plist/binary are picked up.
+    launchctl bootout "gui/${_uid}/${LAUNCHD_LABEL}" 2>/dev/null || true
+    launchctl unload "$LAUNCHD_PLIST" 2>/dev/null || true
+
+    # Try modern bootstrap first (macOS 10.11+); fall back to legacy load -w,
+    # which works in SSH sessions where the gui/$UID domain may not exist.
+    if launchctl bootstrap "gui/${_uid}" "$LAUNCHD_PLIST" 2>/dev/null; then
+        :
+    elif launchctl load -w "$LAUNCHD_PLIST" 2>/dev/null; then
+        :
+    else
+        warn "Could not load launchd agent automatically."
+        warn "Run: launchctl load \"$LAUNCHD_PLIST\""
+        return
+    fi
+
+    # Force-start now instead of waiting for next login event.
+    launchctl kickstart -k "gui/${_uid}/${LAUNCHD_LABEL}" 2>/dev/null || true
     info "Service started"
 }
 
@@ -304,6 +392,17 @@ print_summary() {
         printf "    journalctl --user -u hqsshd -f    # View logs\n"
         printf "    systemctl --user status hqsshd     # Check status\n"
         printf "    systemctl --user restart hqsshd    # Restart\n"
+    elif [ "$OS" = "darwin" ] && [ "${HQSSH_NO_SERVICE:-}" != "1" ] && command -v launchctl >/dev/null 2>&1; then
+        printf "  Service:   %s (launchd user agent)\n" "$LAUNCHD_LABEL"
+        printf "\n"
+        printf "  Useful commands:\n"
+        printf "    tail -f ~/.hqssh/logs/hqsshd.log    # View logs\n"
+        printf "    launchctl list | grep hqsshd        # Check status\n"
+        printf "    launchctl kickstart -k gui/\$(id -u)/%s   # Restart\n" "$LAUNCHD_LABEL"
+        printf "\n"
+        printf "  Note: LaunchAgents auto-start on GUI login. After an unattended reboot\n"
+        printf "  with no one logged into the Mac, the daemon won't start until someone\n"
+        printf "  logs in at the console.\n"
     elif [ "$OS" = "darwin" ]; then
         printf "\n"
         printf "  To start the daemon manually:\n"
@@ -319,23 +418,24 @@ print_summary() {
 uninstall() {
     info "Uninstalling hqsshd..."
 
-    # Ensure XDG_RUNTIME_DIR is set
-    if [ -z "${XDG_RUNTIME_DIR:-}" ]; then
-        export XDG_RUNTIME_DIR="/run/user/$(id -u)"
-    fi
+    _os="$(uname -s | tr '[:upper:]' '[:lower:]')"
 
-    # Stop and disable service
-    if command -v systemctl >/dev/null 2>&1; then
+    # Linux: stop, disable, and remove the systemd user service.
+    if [ "$_os" = "linux" ] && command -v systemctl >/dev/null 2>&1; then
+        if [ -z "${XDG_RUNTIME_DIR:-}" ]; then
+            export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+        fi
         systemctl --user stop "$SERVICE_NAME" 2>/dev/null || true
         systemctl --user disable "$SERVICE_NAME" 2>/dev/null || true
+        rm -f "$SERVICE_FILE"
+        systemctl --user daemon-reload 2>/dev/null || true
     fi
 
-    # Remove service file
-    rm -f "$SERVICE_FILE"
-
-    # Reload systemd
-    if command -v systemctl >/dev/null 2>&1; then
-        systemctl --user daemon-reload 2>/dev/null || true
+    # macOS: unload and remove the launchd agent.
+    if [ "$_os" = "darwin" ] && command -v launchctl >/dev/null 2>&1; then
+        launchctl bootout "gui/$(id -u)/${LAUNCHD_LABEL}" 2>/dev/null || true
+        launchctl unload "$LAUNCHD_PLIST" 2>/dev/null || true
+        rm -f "$LAUNCHD_PLIST"
     fi
 
     # Remove binaries
@@ -362,7 +462,7 @@ main() {
                 printf "Environment variables:\n"
                 printf "  HQSSH_VERSION       Pin a specific version (default: latest)\n"
                 printf "  HQSSH_INSTALL_DIR   Override install directory (default: ~/.local/bin)\n"
-                printf "  HQSSH_NO_SERVICE    Set to 1 to skip systemd service setup\n"
+                printf "  HQSSH_NO_SERVICE    Set to 1 to skip systemd/launchd service setup\n"
                 printf "  HQSSH_NO_START      Set to 1 to skip starting the service\n"
                 exit 0
                 ;;
