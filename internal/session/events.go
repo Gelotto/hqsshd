@@ -67,6 +67,7 @@ type EventHub struct {
 	mu          sync.RWMutex
 	subscribers map[string]chan Event
 	recent      []Event // oldest first, capped at maxRecentEvents
+	closed      bool
 }
 
 // NewEventHub creates an empty event hub.
@@ -83,6 +84,13 @@ func (h *EventHub) Subscribe() (string, <-chan Event) {
 	ch := make(chan Event, 64)
 
 	h.mu.Lock()
+	if h.closed {
+		h.mu.Unlock()
+		// Hub is shutting down: hand back a closed channel so the caller's
+		// receive loop ends immediately instead of blocking forever.
+		close(ch)
+		return id, ch
+	}
 	h.subscribers[id] = ch
 	h.mu.Unlock()
 
@@ -111,6 +119,10 @@ func (h *EventHub) Publish(event Event) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
+	if h.closed {
+		return
+	}
+
 	h.recent = append(h.recent, event)
 	if len(h.recent) > maxRecentEvents {
 		h.recent = h.recent[len(h.recent)-maxRecentEvents:]
@@ -126,6 +138,25 @@ func (h *EventHub) Publish(event Event) {
 				"event_type", event.Type.String(),
 			)
 		}
+	}
+}
+
+// Close removes and closes every subscriber channel and stops accepting new
+// subscribers. Used at daemon shutdown so WatchEvents streams end instead of
+// keeping the gRPC server's graceful stop waiting forever. Safe to call
+// multiple times.
+func (h *EventHub) Close() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if h.closed {
+		return
+	}
+	h.closed = true
+
+	for id, ch := range h.subscribers {
+		close(ch)
+		delete(h.subscribers, id)
 	}
 }
 

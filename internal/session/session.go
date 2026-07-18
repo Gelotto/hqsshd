@@ -265,26 +265,52 @@ func (s *Session) markDone() {
 // AddClient adds a new client and returns its output channel.
 // bufferSize controls the output channel capacity.
 func (s *Session) AddClient(clientID string, bufferSize int) <-chan []byte {
+	ch, clientCount := s.registerClient(clientID, bufferSize)
+	s.noteClientAttached(clientID, clientCount)
+	return ch
+}
+
+// AttachClient atomically snapshots the replay bytes (mode preamble +
+// scrollback) and registers the client. Holding outputBufferMu across both
+// closes the gap where PTY output landing between snapshot and registration
+// would reach neither the replay nor the live stream -- appendAndBroadcast
+// serializes on the same mutex, so every chunk lands in exactly one of them.
+func (s *Session) AttachClient(clientID string, bufferSize int) ([]byte, <-chan []byte) {
+	s.outputBufferMu.Lock()
+	preamble := s.modes.preamble()
+	replay := make([]byte, 0, len(preamble)+len(s.outputBuffer))
+	replay = append(replay, preamble...)
+	replay = append(replay, s.outputBuffer...)
+	ch, clientCount := s.registerClient(clientID, bufferSize)
+	s.outputBufferMu.Unlock()
+
+	s.noteClientAttached(clientID, clientCount)
+	return replay, ch
+}
+
+// registerClient adds the client channel. Safe to call while holding
+// outputBufferMu (lock order: outputBufferMu -> clientsMu, matching
+// appendAndBroadcast).
+func (s *Session) registerClient(clientID string, bufferSize int) (<-chan []byte, int) {
 	if bufferSize <= 0 {
 		bufferSize = 256
 	}
-	// Create buffered channel for output
 	cs := &clientState{
 		ch: make(chan []byte, bufferSize),
 	}
 
-	// Track if we need to update status (avoid nested locks)
-	var shouldUpdateStatus bool
-	var clientCount int
-
 	s.clientsMu.Lock()
 	s.clients[clientID] = cs
-	clientCount = len(s.clients)
-	shouldUpdateStatus = clientCount == 1
+	clientCount := len(s.clients)
 	s.clientsMu.Unlock()
 
-	// Update status AFTER releasing clientsMu (prevents deadlock)
-	if shouldUpdateStatus {
+	return cs.ch, clientCount
+}
+
+// noteClientAttached updates session status and logs after registration,
+// outside the buffer and client locks (prevents deadlock).
+func (s *Session) noteClientAttached(clientID string, clientCount int) {
+	if clientCount == 1 {
 		s.statusMu.Lock()
 		oldStatus := s.status
 		if s.status == StatusIdle {
@@ -307,8 +333,6 @@ func (s *Session) AddClient(clientID string, bufferSize int) <-chan []byte {
 		"client_id", clientID,
 		"client_count", clientCount,
 	)
-
-	return cs.ch
 }
 
 // RemoveClient removes a client from the session
@@ -365,13 +389,6 @@ func (s *Session) RemoveClient(clientID string) {
 	}
 }
 
-// ModePreamble returns escape sequences restoring the session's current DEC
-// private mode state (alt buffer, mouse tracking, bracketed paste, ...) for
-// clients attaching after those sequences were trimmed from the scrollback.
-func (s *Session) ModePreamble() []byte {
-	return s.modes.preamble()
-}
-
 // GetScrollback returns the output buffer for client catch-up
 func (s *Session) GetScrollback() []byte {
 	s.outputBufferMu.Lock()
@@ -383,17 +400,31 @@ func (s *Session) GetScrollback() []byte {
 	return result
 }
 
-// appendToBuffer adds data to the scrollback buffer
-func (s *Session) appendToBuffer(data []byte) {
+// appendAndBroadcast adds data to the scrollback buffer and forwards it to
+// attached clients under the same lock. Serializing with AttachClient means
+// every chunk lands in either the attach snapshot or the live stream --
+// never neither (lost) nor both (duplicated).
+func (s *Session) appendAndBroadcast(data []byte) {
 	s.outputBufferMu.Lock()
 	defer s.outputBufferMu.Unlock()
 
 	s.outputBuffer = append(s.outputBuffer, data...)
 
-	// Trim if over max size (keep the most recent maxBufferSize bytes)
+	// Trim if over max size (keep the most recent maxBufferSize bytes),
+	// then advance past UTF-8 continuation bytes so replay starts on a
+	// rune boundary instead of mid-character.
 	if len(s.outputBuffer) > s.maxBufferSize {
-		s.outputBuffer = s.outputBuffer[len(s.outputBuffer)-s.maxBufferSize:]
+		start := len(s.outputBuffer) - s.maxBufferSize
+		for i := 0; i < 3 && start < len(s.outputBuffer); i++ {
+			if s.outputBuffer[start]&0xC0 != 0x80 {
+				break
+			}
+			start++
+		}
+		s.outputBuffer = s.outputBuffer[start:]
 	}
+
+	s.broadcast(data)
 }
 
 // broadcast sends data to all attached clients

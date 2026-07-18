@@ -194,8 +194,9 @@ func (s *Session) readPTYOutput() {
 			// Update activity
 			s.UpdateActivity()
 
-			// Add to scrollback buffer (in-memory, for fast attach)
-			s.appendToBuffer(data)
+			// Append to scrollback and forward to clients under one lock so
+			// attach snapshots are gap- and duplicate-free
+			s.appendAndBroadcast(data)
 
 			// Track DEC private mode state (alt buffer, mouse tracking) so
 			// attach replay can restore it after the buffer trims the
@@ -211,9 +212,6 @@ func (s *Session) readPTYOutput() {
 					)
 				}
 			}
-
-			// Broadcast to all clients
-			s.broadcast(data)
 
 			// Emit attention event on bare terminal bell (AI CLIs ring it
 			// when finished or awaiting input), rate-limited per session
@@ -279,7 +277,8 @@ func (s *Session) Kill() error {
 
 	// Send SIGTERM to the entire process group for graceful shutdown.
 	// Negative PID targets the process group (setsid makes PID = PGID).
-	if err := syscall.Kill(-s.cmd.Pid, syscall.SIGTERM); err != nil {
+	pid := s.cmd.Pid
+	if err := syscall.Kill(-pid, syscall.SIGTERM); err != nil {
 		// If SIGTERM fails, try SIGKILL on the process group
 		logging.Debug("SIGTERM to process group failed, sending SIGKILL",
 			"session_id", s.ID,
@@ -295,10 +294,29 @@ func (s *Session) Kill() error {
 				return fmt.Errorf("failed to kill process: %w", fallbackErr)
 			}
 		}
+		return nil
 	}
+
+	// A successful SIGTERM only means delivery: a process that ignores it
+	// would live forever. After a grace period, SIGKILL whatever remains of
+	// the group -- ESRCH (error) means everything already exited.
+	sessionID := s.ID
+	go func() {
+		time.Sleep(killGracePeriod)
+		if err := syscall.Kill(-pid, syscall.SIGKILL); err == nil {
+			logging.Info("process group ignored SIGTERM, escalated to SIGKILL",
+				"session_id", sessionID,
+				"pid", pid,
+			)
+		}
+	}()
 
 	return nil
 }
+
+// killGracePeriod is how long a process group gets to exit after SIGTERM
+// before it is SIGKILLed.
+const killGracePeriod = 3 * time.Second
 
 // Close cleans up session resources.
 // Uses sync.Once to ensure idempotent behavior - safe to call multiple times.

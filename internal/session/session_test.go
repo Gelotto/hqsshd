@@ -138,8 +138,8 @@ func TestSession_GetScrollback(t *testing.T) {
 	}
 
 	// Append some data
-	sess.appendToBuffer([]byte("hello"))
-	sess.appendToBuffer([]byte(" world"))
+	sess.appendAndBroadcast([]byte("hello"))
+	sess.appendAndBroadcast([]byte(" world"))
 
 	scrollback = sess.GetScrollback()
 	if string(scrollback) != "hello world" {
@@ -150,7 +150,7 @@ func TestSession_GetScrollback(t *testing.T) {
 func TestSession_GetScrollback_ReturnsCopy(t *testing.T) {
 	sess := NewSession("proj-1", "shell", "/tmp", "", nil, 80, 24, 1024)
 
-	sess.appendToBuffer([]byte("original"))
+	sess.appendAndBroadcast([]byte("original"))
 
 	scrollback := sess.GetScrollback()
 	// Modify the returned slice
@@ -168,9 +168,9 @@ func TestSession_AppendToBuffer_TrimsWhenOverMax(t *testing.T) {
 	sess := NewSession("proj-1", "shell", "/tmp", "", nil, 80, 24, 10)
 
 	// Add 15 bytes
-	sess.appendToBuffer([]byte("12345"))
-	sess.appendToBuffer([]byte("67890"))
-	sess.appendToBuffer([]byte("ABCDE"))
+	sess.appendAndBroadcast([]byte("12345"))
+	sess.appendAndBroadcast([]byte("67890"))
+	sess.appendAndBroadcast([]byte("ABCDE"))
 
 	scrollback := sess.GetScrollback()
 	if len(scrollback) > 10 {
@@ -353,7 +353,7 @@ func TestSession_ConcurrentAccess(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			sess.appendToBuffer([]byte("test"))
+			sess.appendAndBroadcast([]byte("test"))
 			sess.GetScrollback()
 		}()
 	}

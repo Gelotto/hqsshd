@@ -233,6 +233,10 @@ func (s *Server) Start() error {
 	return s.grpcServer.Serve(s.unixListener)
 }
 
+// shutdownGracePeriod bounds how long Stop waits for in-flight RPCs before
+// forcibly terminating the gRPC server.
+const shutdownGracePeriod = 10 * time.Second
+
 // Stop gracefully stops the server
 func (s *Server) Stop() {
 	// Stop webhook delivery first (sessions closing below emit ENDED events)
@@ -245,14 +249,31 @@ func (s *Server) Stop() {
 		s.taskExecutor.Close()
 	}
 
-	// Close session manager (kills all sessions)
+	// Close session manager (kills all sessions), then end WatchEvents
+	// streams -- GracefulStop below waits for active RPCs, and those
+	// streams never finish on their own
 	if s.sessionManager != nil {
 		s.sessionManager.Close()
+		s.sessionManager.Events().Close()
 	}
 
-	// Gracefully stop gRPC server (stops both listeners)
+	// Gracefully stop gRPC server (stops both listeners), bounded by a
+	// deadline so a stuck client stream cannot hang shutdown forever
 	if s.grpcServer != nil {
-		s.grpcServer.GracefulStop()
+		stopped := make(chan struct{})
+		go func() {
+			s.grpcServer.GracefulStop()
+			close(stopped)
+		}()
+		select {
+		case <-stopped:
+		case <-time.After(shutdownGracePeriod):
+			logging.Warn("graceful stop timed out, forcing stop",
+				"timeout", shutdownGracePeriod,
+			)
+			s.grpcServer.Stop()
+			<-stopped
+		}
 	}
 
 	// Fix 6: Wait for TCP goroutine to finish

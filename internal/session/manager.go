@@ -178,6 +178,7 @@ func (m *Manager) cleanup() {
 	for _, sc := range toClose {
 		delete(m.sessions, sc.id)
 	}
+	remaining := len(m.sessions)
 
 	m.sessionsMu.Unlock()
 
@@ -196,7 +197,7 @@ func (m *Manager) cleanup() {
 		logging.Debug("cleanup completed",
 			"removed_ended", endedCount,
 			"removed_idle_timeout", idleTimeoutCount,
-			"remaining_sessions", len(m.sessions),
+			"remaining_sessions", remaining,
 		)
 
 		// Save store after marking sessions as ended
@@ -227,6 +228,13 @@ func (m *Manager) cleanup() {
 func (m *Manager) Create(projectID, tool, workingDir, name string, args []string, cols, rows int) (*Session, error) {
 	m.sessionsMu.Lock()
 	defer m.sessionsMu.Unlock()
+
+	// Reject creates racing shutdown: Close() sets the flag before taking
+	// sessionsMu, so checking under the lock means a session is either
+	// rejected here or included in Close()'s sweep -- never leaked
+	if m.closed.Load() {
+		return nil, fmt.Errorf("session manager is shut down")
+	}
 
 	// Check max sessions limit
 	if m.maxSessions > 0 && len(m.sessions) >= m.maxSessions {
@@ -357,17 +365,9 @@ func (m *Manager) Attach(sessionID string, cols, rows int) (string, <-chan []byt
 		}
 	}
 
-	// Get scrollback before attaching (for catch-up). The mode preamble is
-	// snapshotted first: a mode change landing between the two snapshots is
-	// then applied twice (idempotent) rather than missed entirely.
-	preamble := sess.ModePreamble()
-	scrollback := sess.GetScrollback()
-	if len(preamble) > 0 {
-		scrollback = append(preamble, scrollback...)
-	}
-
-	// Add client with configurable buffer size
-	outputCh := sess.AddClient(clientID, m.clientBufferSize)
+	// Atomically snapshot replay bytes (mode preamble + scrollback) and
+	// register the client so no PTY output falls between the two
+	scrollback, outputCh := sess.AttachClient(clientID, m.clientBufferSize)
 
 	logging.Info("client attached",
 		"session_id", sessionID,
