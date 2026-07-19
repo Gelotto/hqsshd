@@ -55,6 +55,9 @@ type Server struct {
 	detector       *tools.Detector
 	discovery      *project.Discovery
 	registry       *project.Registry
+	discoveryState *project.DiscoveryState
+	rescanMu       sync.Mutex
+	lastRescan     time.Time
 	sessionManager *session.Manager
 	taskStore      *task.Store
 	taskRunStore   *task.RunStore
@@ -81,6 +84,10 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		logging.Warn("failed to load project registry", "error", err)
 	}
 
+	discoveryState := project.NewDiscoveryState(dataDir)
+	if err := discoveryState.Load(); err != nil {
+		logging.Warn("failed to load discovery state", "error", err)
+	}
 
 	// Create session manager with config values
 	sessionMgr := session.NewManager(
@@ -120,6 +127,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		detector:       detector,
 		discovery:      discovery,
 		registry:       registry,
+		discoveryState: discoveryState,
 		sessionManager: sessionMgr,
 		taskStore:      taskStore,
 		taskRunStore:   taskRunStore,
@@ -408,12 +416,54 @@ func (s *systemService) GetStatus(ctx context.Context, _ *pb.Empty) (*pb.SystemS
 // ProjectService Implementation
 // ============================================================================
 
+// projectRescanInterval throttles the automatic rescan triggered by List
+const projectRescanInterval = 60 * time.Second
+
 type projectService struct {
 	pb.UnimplementedProjectServiceServer
 	server *Server
 }
 
+// maybeRescan re-runs discovery over the configured and user-taught scan
+// roots when the last scan is stale, auto-registering any new repositories.
+// Deliberately removed projects (tombstoned in discoveryState) are skipped.
+func (s *Server) maybeRescan() {
+	s.rescanMu.Lock()
+	defer s.rescanMu.Unlock()
+
+	if time.Since(s.lastRescan) < projectRescanInterval {
+		return
+	}
+	s.lastRescan = time.Now()
+
+	seen := make(map[string]bool)
+	var dirs []string
+	for _, dir := range append(append([]string{}, s.config.Projects.ScanDirectories...), s.discoveryState.ScanRoots()...) {
+		if !seen[dir] {
+			seen[dir] = true
+			dirs = append(dirs, dir)
+		}
+	}
+
+	discovered, _, err := s.discovery.Discover(dirs, 0)
+	if err != nil {
+		logging.Warn("automatic project rescan failed", "error", err)
+		return
+	}
+
+	added := s.registry.MergeDiscovered(s.discoveryState.FilterRemoved(discovered))
+	if added == 0 {
+		return
+	}
+	logging.Info("auto-registered new projects", "count", added)
+	if err := s.registry.Save(); err != nil {
+		logging.Warn("failed to save project registry after rescan", "error", err)
+	}
+}
+
 func (s *projectService) List(ctx context.Context, req *pb.ListProjectsRequest) (*pb.ListProjectsResponse, error) {
+	s.server.maybeRescan()
+
 	projects := s.server.registry.List(req.GetFavoritesOnly())
 
 	pbProjects := make([]*pb.Project, len(projects))
@@ -436,6 +486,13 @@ func (s *projectService) Add(ctx context.Context, req *pb.AddProjectRequest) (*p
 		return nil, status.Errorf(codes.InvalidArgument, "invalid path: %v", err)
 	}
 
+	// An explicit add overrides a previous removal
+	if s.server.discoveryState.ClearRemoved(proj.Path) {
+		if err := s.server.discoveryState.Save(); err != nil {
+			logging.Warn("failed to save discovery state", "error", err)
+		}
+	}
+
 	s.server.registry.Add(proj)
 	if err := s.server.registry.Save(); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to save registry: %v", err)
@@ -449,8 +506,15 @@ func (s *projectService) Remove(ctx context.Context, req *pb.RemoveProjectReques
 		return nil, status.Error(codes.InvalidArgument, "project_id is required")
 	}
 
-	if !s.server.registry.Remove(req.GetProjectId()) {
+	proj := s.server.registry.Get(req.GetProjectId())
+	if proj == nil || !s.server.registry.Remove(req.GetProjectId()) {
 		return nil, status.Error(codes.NotFound, "project not found")
+	}
+
+	// Tombstone the path so automatic rescans don't re-add it
+	s.server.discoveryState.AddRemoved(proj.Path)
+	if err := s.server.discoveryState.Save(); err != nil {
+		logging.Warn("failed to save discovery state", "error", err)
 	}
 
 	if err := s.server.registry.Save(); err != nil {
@@ -466,7 +530,15 @@ func (s *projectService) Discover(ctx context.Context, req *pb.DiscoverRequest) 
 		return nil, status.Errorf(codes.Internal, "discovery failed: %v", err)
 	}
 
-	// Merge with existing registry
+	// Remember explicitly scanned directories so automatic rescans cover them
+	if len(req.GetDirectories()) > 0 && s.server.discoveryState.AddScanRoots(req.GetDirectories()) {
+		if err := s.server.discoveryState.Save(); err != nil {
+			logging.Warn("failed to save discovery state", "error", err)
+		}
+	}
+
+	// Merge with existing registry, skipping deliberately removed projects
+	discovered = s.server.discoveryState.FilterRemoved(discovered)
 	s.server.registry.MergeDiscovered(discovered)
 	if err := s.server.registry.Save(); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to save registry: %v", err)

@@ -63,11 +63,7 @@ func (d *Discovery) Discover(directories []string, maxDepth int) ([]*Project, in
 	totalScanned := 0
 
 	for _, dir := range directories {
-		// Expand home directory
-		if strings.HasPrefix(dir, "~") {
-			home, _ := os.UserHomeDir()
-			dir = filepath.Join(home, dir[1:])
-		}
+		dir = expandHome(dir)
 
 		// Check if directory exists
 		info, err := os.Stat(dir)
@@ -170,11 +166,7 @@ func (d *Discovery) createProject(path string) *Project {
 
 // CreateFromPath creates a project from a specific path
 func (d *Discovery) CreateFromPath(path, name string) (*Project, error) {
-	// Expand home directory
-	if strings.HasPrefix(path, "~") {
-		home, _ := os.UserHomeDir()
-		path = filepath.Join(home, path[1:])
-	}
+	path = expandHome(path)
 
 	// Verify path exists
 	info, err := os.Stat(path)
@@ -199,6 +191,15 @@ func (d *Discovery) CreateFromPath(path, name string) (*Project, error) {
 	}
 
 	return project, nil
+}
+
+// expandHome expands a leading ~ to the user's home directory
+func expandHome(path string) string {
+	if strings.HasPrefix(path, "~") {
+		home, _ := os.UserHomeDir()
+		return filepath.Join(home, path[1:])
+	}
+	return path
 }
 
 // generateProjectID generates a unique ID for a project based on its path
