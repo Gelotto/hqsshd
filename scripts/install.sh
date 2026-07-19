@@ -250,9 +250,12 @@ StandardError=journal
 # Security hardening
 # NOTE: ProtectHome is intentionally omitted — AI tools (claude, codex, aider)
 # need write access to project directories under \$HOME.
+# NOTE: PrivateTmp and ProtectSystem are intentionally omitted. For user
+# units, any mount-namespace option puts the service in an unprivileged user
+# namespace, which (a) hides /tmp/hqssh.sock from local CLI tools and
+# (b) blocks reading /proc/<pid>/cwd of the user's other processes, breaking
+# external session discovery (ListExternalSessions).
 NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
 
 [Install]
 WantedBy=default.target

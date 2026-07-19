@@ -154,6 +154,14 @@ service SessionService {
 
   // List recent session events, newest first (agent activity feed)
   rpc ListEvents(ListEventsRequest) returns (ListEventsResponse);
+
+  // List AI CLI processes running OUTSIDE daemon management (e.g. claude
+  // launched from a plain SSH shell), matched to projects by working directory
+  rpc ListExternalSessions(ListExternalSessionsRequest) returns (ListExternalSessionsResponse);
+
+  // Terminate an external AI CLI process (SIGTERM, escalating to SIGKILL).
+  // The process must still match the claimed tool to guard against PID reuse.
+  rpc KillExternalSession(KillExternalSessionRequest) returns (Empty);
 }
 
 message Session {
@@ -249,6 +257,29 @@ message ListEventsRequest {
 
 message ListEventsResponse {
   repeated SessionEvent events = 1; // Newest first
+}
+
+// An AI CLI process running outside daemon management. It cannot be attached
+// to (its PTY belongs to another terminal) but can be observed and terminated.
+message ExternalSession {
+  int32 pid = 1;
+  string tool = 2;                  // 'claude', 'codex', 'aider'
+  string working_directory = 3;
+  int64 started_at = 4;             // Unix timestamp (0 if unknown)
+  string command = 5;               // Display command line (may be truncated)
+}
+
+message ListExternalSessionsRequest {
+  string project_id = 1;            // Optional - only processes with cwd inside this project
+}
+
+message ListExternalSessionsResponse {
+  repeated ExternalSession sessions = 1;
+}
+
+message KillExternalSessionRequest {
+  int32 pid = 1;
+  string tool = 2;                  // Must match the process's detected tool
 }
 
 message GetScrollbackRequest {

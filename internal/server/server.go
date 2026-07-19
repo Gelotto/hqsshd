@@ -21,6 +21,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -36,6 +37,7 @@ import (
 	"github.com/gelotto/hqsshd/internal/config"
 	"github.com/gelotto/hqsshd/internal/logging"
 	"github.com/gelotto/hqsshd/internal/notify"
+	"github.com/gelotto/hqsshd/internal/procscan"
 	"github.com/gelotto/hqsshd/internal/project"
 	"github.com/gelotto/hqsshd/internal/session"
 	"github.com/gelotto/hqsshd/internal/task"
@@ -78,6 +80,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	if err := registry.Load(); err != nil {
 		logging.Warn("failed to load project registry", "error", err)
 	}
+
 
 	// Create session manager with config values
 	sessionMgr := session.NewManager(
@@ -899,6 +902,82 @@ func (s *sessionService) ListEvents(ctx context.Context, req *pb.ListEventsReque
 	}
 
 	return &pb.ListEventsResponse{Events: pbEvents}, nil
+}
+
+// ListExternalSessions reports AI CLI processes running outside daemon
+// management (e.g. claude launched from a plain SSH shell), optionally
+// filtered to those whose working directory is inside a project.
+func (s *sessionService) ListExternalSessions(ctx context.Context, req *pb.ListExternalSessionsRequest) (*pb.ListExternalSessionsResponse, error) {
+	var projectPath string
+	if projectID := req.GetProjectId(); projectID != "" {
+		proj := s.server.registry.Get(projectID)
+		if proj == nil {
+			return nil, status.Error(codes.NotFound, "project not found")
+		}
+		projectPath = proj.Path
+	}
+
+	// Excluding the daemon's own subtree hides daemon-managed session and
+	// task processes, which are already reported as regular sessions.
+	sessions := procscan.Scan(s.server.externalTools(), []int{os.Getpid()})
+
+	pbSessions := make([]*pb.ExternalSession, 0, len(sessions))
+	for _, es := range sessions {
+		if projectPath != "" && !pathWithin(es.WorkingDir, projectPath) {
+			continue
+		}
+		var startedAt int64
+		if !es.StartedAt.IsZero() {
+			startedAt = es.StartedAt.Unix()
+		}
+		pbSessions = append(pbSessions, &pb.ExternalSession{
+			Pid:              int32(es.PID),
+			Tool:             es.Tool,
+			WorkingDirectory: es.WorkingDir,
+			StartedAt:        startedAt,
+			Command:          es.Command,
+		})
+	}
+
+	return &pb.ListExternalSessionsResponse{Sessions: pbSessions}, nil
+}
+
+// KillExternalSession terminates an external AI CLI process. The tool name
+// must match what the process is actually running (PID-reuse guard).
+func (s *sessionService) KillExternalSession(ctx context.Context, req *pb.KillExternalSessionRequest) (*pb.Empty, error) {
+	pid := int(req.GetPid())
+	tool := req.GetTool()
+	if pid <= 1 {
+		return nil, status.Error(codes.InvalidArgument, "valid pid is required")
+	}
+	if tool == "" {
+		return nil, status.Error(codes.InvalidArgument, "tool is required")
+	}
+
+	if err := procscan.Kill(pid, tool, s.server.externalTools()); err != nil {
+		return nil, status.Errorf(codes.FailedPrecondition, "%v", err)
+	}
+
+	return &pb.Empty{}, nil
+}
+
+// externalTools returns the configured AI tool names eligible for external
+// process discovery ("shell" is excluded - every shell would match).
+func (s *Server) externalTools() []string {
+	names := make([]string, 0, len(s.config.Tools))
+	for _, t := range s.config.Tools {
+		if t.Name != "shell" {
+			names = append(names, t.Name)
+		}
+	}
+	return names
+}
+
+// pathWithin reports whether path is dir itself or inside it.
+func pathWithin(path, dir string) bool {
+	path = filepath.Clean(path)
+	dir = filepath.Clean(dir)
+	return path == dir || strings.HasPrefix(path, dir+string(filepath.Separator))
 }
 
 // sessionEventToProto converts a session.Event to its protobuf form

@@ -453,6 +453,8 @@ const (
 	SessionService_ListHistoricalSessions_FullMethodName = "/hqssh.SessionService/ListHistoricalSessions"
 	SessionService_WatchEvents_FullMethodName            = "/hqssh.SessionService/WatchEvents"
 	SessionService_ListEvents_FullMethodName             = "/hqssh.SessionService/ListEvents"
+	SessionService_ListExternalSessions_FullMethodName   = "/hqssh.SessionService/ListExternalSessions"
+	SessionService_KillExternalSession_FullMethodName    = "/hqssh.SessionService/KillExternalSession"
 )
 
 // SessionServiceClient is the client API for SessionService service.
@@ -485,6 +487,12 @@ type SessionServiceClient interface {
 	WatchEvents(ctx context.Context, in *WatchEventsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[SessionEvent], error)
 	// List recent session events, newest first (agent activity feed)
 	ListEvents(ctx context.Context, in *ListEventsRequest, opts ...grpc.CallOption) (*ListEventsResponse, error)
+	// List AI CLI processes running OUTSIDE daemon management (e.g. claude
+	// launched from a plain SSH shell), matched to projects by working directory
+	ListExternalSessions(ctx context.Context, in *ListExternalSessionsRequest, opts ...grpc.CallOption) (*ListExternalSessionsResponse, error)
+	// Terminate an external AI CLI process (SIGTERM, escalating to SIGKILL).
+	// The process must still match the claimed tool to guard against PID reuse.
+	KillExternalSession(ctx context.Context, in *KillExternalSessionRequest, opts ...grpc.CallOption) (*Empty, error)
 }
 
 type sessionServiceClient struct {
@@ -645,6 +653,26 @@ func (c *sessionServiceClient) ListEvents(ctx context.Context, in *ListEventsReq
 	return out, nil
 }
 
+func (c *sessionServiceClient) ListExternalSessions(ctx context.Context, in *ListExternalSessionsRequest, opts ...grpc.CallOption) (*ListExternalSessionsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListExternalSessionsResponse)
+	err := c.cc.Invoke(ctx, SessionService_ListExternalSessions_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sessionServiceClient) KillExternalSession(ctx context.Context, in *KillExternalSessionRequest, opts ...grpc.CallOption) (*Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Empty)
+	err := c.cc.Invoke(ctx, SessionService_KillExternalSession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SessionServiceServer is the server API for SessionService service.
 // All implementations must embed UnimplementedSessionServiceServer
 // for forward compatibility.
@@ -675,6 +703,12 @@ type SessionServiceServer interface {
 	WatchEvents(*WatchEventsRequest, grpc.ServerStreamingServer[SessionEvent]) error
 	// List recent session events, newest first (agent activity feed)
 	ListEvents(context.Context, *ListEventsRequest) (*ListEventsResponse, error)
+	// List AI CLI processes running OUTSIDE daemon management (e.g. claude
+	// launched from a plain SSH shell), matched to projects by working directory
+	ListExternalSessions(context.Context, *ListExternalSessionsRequest) (*ListExternalSessionsResponse, error)
+	// Terminate an external AI CLI process (SIGTERM, escalating to SIGKILL).
+	// The process must still match the claimed tool to guard against PID reuse.
+	KillExternalSession(context.Context, *KillExternalSessionRequest) (*Empty, error)
 	mustEmbedUnimplementedSessionServiceServer()
 }
 
@@ -720,6 +754,12 @@ func (UnimplementedSessionServiceServer) WatchEvents(*WatchEventsRequest, grpc.S
 }
 func (UnimplementedSessionServiceServer) ListEvents(context.Context, *ListEventsRequest) (*ListEventsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListEvents not implemented")
+}
+func (UnimplementedSessionServiceServer) ListExternalSessions(context.Context, *ListExternalSessionsRequest) (*ListExternalSessionsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListExternalSessions not implemented")
+}
+func (UnimplementedSessionServiceServer) KillExternalSession(context.Context, *KillExternalSessionRequest) (*Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method KillExternalSession not implemented")
 }
 func (UnimplementedSessionServiceServer) mustEmbedUnimplementedSessionServiceServer() {}
 func (UnimplementedSessionServiceServer) testEmbeddedByValue()                        {}
@@ -926,6 +966,42 @@ func _SessionService_ListEvents_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SessionService_ListExternalSessions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListExternalSessionsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SessionServiceServer).ListExternalSessions(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SessionService_ListExternalSessions_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SessionServiceServer).ListExternalSessions(ctx, req.(*ListExternalSessionsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SessionService_KillExternalSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(KillExternalSessionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SessionServiceServer).KillExternalSession(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SessionService_KillExternalSession_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SessionServiceServer).KillExternalSession(ctx, req.(*KillExternalSessionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SessionService_ServiceDesc is the grpc.ServiceDesc for SessionService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -964,6 +1040,14 @@ var SessionService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListEvents",
 			Handler:    _SessionService_ListEvents_Handler,
+		},
+		{
+			MethodName: "ListExternalSessions",
+			Handler:    _SessionService_ListExternalSessions_Handler,
+		},
+		{
+			MethodName: "KillExternalSession",
+			Handler:    _SessionService_KillExternalSession_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

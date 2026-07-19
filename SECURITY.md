@@ -32,7 +32,7 @@ hqsshd is designed to run as a **user-level daemon** on remote systems accessed 
 
 - **Listening scope**: Unix socket (owner-only permissions `0600`) and TCP on `127.0.0.1` only (localhost, not exposed to network)
 - **Authentication**: Optional token-based auth with constant-time comparison
-- **Process isolation**: Systemd hardening with `NoNewPrivileges`, `ProtectSystem=strict`, `PrivateTmp`
+- **Process isolation**: Systemd hardening with `NoNewPrivileges`. (`ProtectSystem` and `PrivateTmp` are deliberately NOT used: for user units they force an unprivileged user namespace, which hides the `/tmp/hqssh.sock` unix socket from local CLI tools and blocks the `/proc/<pid>/cwd` reads that external session discovery needs.)
 - **Tool execution**: Tool names validated against a configurable whitelist; shell tool requires explicit opt-in
 - **Command injection prevention**: User prompts passed as positional arguments (`$1`), not interpolated into shell commands
 
