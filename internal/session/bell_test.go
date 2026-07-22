@@ -15,55 +15,119 @@
 package session
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
 
 func TestBellDetector(t *testing.T) {
 	tests := []struct {
-		name   string
-		chunks []string
-		want   []bool // expected result per chunk
+		name     string
+		chunks   []string
+		wantBell []bool     // expected bare-bell result per chunk
+		wantMsgs [][]string // expected OSC 9 messages per chunk (nil = none)
 	}{
 		{
-			name:   "bare bell",
-			chunks: []string{"done\x07"},
-			want:   []bool{true},
+			name:     "bare bell",
+			chunks:   []string{"done\x07"},
+			wantBell: []bool{true},
+			wantMsgs: [][]string{nil},
 		},
 		{
-			name:   "no bell",
-			chunks: []string{"compiling...\r\n"},
-			want:   []bool{false},
+			name:     "no bell",
+			chunks:   []string{"compiling...\r\n"},
+			wantBell: []bool{false},
+			wantMsgs: [][]string{nil},
 		},
 		{
-			name:   "OSC title terminated by BEL is ignored",
-			chunks: []string{"\x1b]0;claude — running task\x07"},
-			want:   []bool{false},
+			name:     "OSC title terminated by BEL is ignored",
+			chunks:   []string{"\x1b]0;claude — running task\x07"},
+			wantBell: []bool{false},
+			wantMsgs: [][]string{nil},
 		},
 		{
-			name:   "bell after OSC sequence ends",
-			chunks: []string{"\x1b]0;title\x07ready\x07"},
-			want:   []bool{true},
+			name:     "bell after OSC sequence ends",
+			chunks:   []string{"\x1b]0;title\x07ready\x07"},
+			wantBell: []bool{true},
+			wantMsgs: [][]string{nil},
 		},
 		{
-			name:   "OSC terminated by ST then bell",
-			chunks: []string{"\x1b]0;title\x1b\\", "\x07"},
-			want:   []bool{false, true},
+			name:     "OSC terminated by ST then bell",
+			chunks:   []string{"\x1b]0;title\x1b\\", "\x07"},
+			wantBell: []bool{false, true},
+			wantMsgs: [][]string{nil, nil},
 		},
 		{
-			name:   "OSC split across chunks",
-			chunks: []string{"\x1b]0;long ti", "tle here\x07", "\x07"},
-			want:   []bool{false, false, true},
+			name:     "OSC split across chunks",
+			chunks:   []string{"\x1b]0;long ti", "tle here\x07", "\x07"},
+			wantBell: []bool{false, false, true},
+			wantMsgs: [][]string{nil, nil, nil},
 		},
 		{
-			name:   "ESC split across chunk boundary",
-			chunks: []string{"\x1b", "]0;t\x07"},
-			want:   []bool{false, false},
+			name:     "ESC split across chunk boundary",
+			chunks:   []string{"\x1b", "]0;t\x07"},
+			wantBell: []bool{false, false},
+			wantMsgs: [][]string{nil, nil},
 		},
 		{
-			name:   "CSI sequences do not affect detection",
-			chunks: []string{"\x1b[2J\x1b[31mred\x1b[0m\x07"},
-			want:   []bool{true},
+			name:     "CSI sequences do not affect detection",
+			chunks:   []string{"\x1b[2J\x1b[31mred\x1b[0m\x07"},
+			wantBell: []bool{true},
+			wantMsgs: [][]string{nil},
+		},
+		{
+			name:     "OSC 9 notification terminated by BEL",
+			chunks:   []string{"\x1b]9;Approval requested\x07"},
+			wantBell: []bool{false},
+			wantMsgs: [][]string{{"Approval requested"}},
+		},
+		{
+			name:     "OSC 9 notification terminated by ST",
+			chunks:   []string{"\x1b]9;Codex turn complete\x1b\\"},
+			wantBell: []bool{false},
+			wantMsgs: [][]string{{"Codex turn complete"}},
+		},
+		{
+			name:     "OSC 9 split across chunks",
+			chunks:   []string{"\x1b]9;Appro", "val req", "uested\x07"},
+			wantBell: []bool{false, false, false},
+			wantMsgs: [][]string{nil, nil, {"Approval requested"}},
+		},
+		{
+			name:     "bare bell and OSC 9 in one chunk",
+			chunks:   []string{"\x07\x1b]9;needs input\x07"},
+			wantBell: []bool{true},
+			wantMsgs: [][]string{{"needs input"}},
+		},
+		{
+			name:     "OSC 0 then OSC 9 resets buffer between sequences",
+			chunks:   []string{"\x1b]0;title\x07\x1b]9;msg\x07"},
+			wantBell: []bool{false},
+			wantMsgs: [][]string{{"msg"}},
+		},
+		{
+			name:     "OSC 99 is not a notification",
+			chunks:   []string{"\x1b]99;not for us\x07"},
+			wantBell: []bool{false},
+			wantMsgs: [][]string{nil},
+		},
+		{
+			name:     "empty OSC 9 payload produces no message",
+			chunks:   []string{"\x1b]9;\x07"},
+			wantBell: []bool{false},
+			wantMsgs: [][]string{nil},
+		},
+		{
+			name:     "oversized OSC 9 payload is capped without panic",
+			chunks:   []string{"\x1b]9;" + strings.Repeat("a", maxOSCBuffer+200) + "\x07"},
+			wantBell: []bool{false},
+			wantMsgs: [][]string{{strings.Repeat("a", maxOSCBuffer-2)}},
+		},
+		{
+			name:     "invalid UTF-8 payload is sanitized",
+			chunks:   []string{"\x1b]9;bad\xff\xfebytes\x07"},
+			wantBell: []bool{false},
+			wantMsgs: [][]string{{"bad�bytes"}},
 		},
 	}
 
@@ -72,9 +136,19 @@ func TestBellDetector(t *testing.T) {
 			d := &bellDetector{}
 			for i, chunk := range tt.chunks {
 				got := d.process([]byte(chunk))
-				if got != tt.want[i] {
-					t.Errorf("chunk %d: process(%q) = %v, want %v",
-						i, chunk, got, tt.want[i])
+				if got.bell != tt.wantBell[i] {
+					t.Errorf("chunk %d: process(%q).bell = %v, want %v",
+						i, chunk, got.bell, tt.wantBell[i])
+				}
+				if len(got.messages) != len(tt.wantMsgs[i]) {
+					t.Fatalf("chunk %d: process(%q).messages = %q, want %q",
+						i, chunk, got.messages, tt.wantMsgs[i])
+				}
+				for j, msg := range got.messages {
+					if msg != tt.wantMsgs[i][j] {
+						t.Errorf("chunk %d message %d = %q, want %q",
+							i, j, msg, tt.wantMsgs[i][j])
+					}
 				}
 			}
 		})

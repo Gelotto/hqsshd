@@ -1547,6 +1547,7 @@ type SessionEvent struct {
 	Tool          string                 `protobuf:"bytes,3,opt,name=tool,proto3" json:"tool,omitempty"`
 	Type          SessionEventType       `protobuf:"varint,4,opt,name=type,proto3,enum=hqssh.SessionEventType" json:"type,omitempty"`
 	Timestamp     int64                  `protobuf:"varint,5,opt,name=timestamp,proto3" json:"timestamp,omitempty"` // Unix timestamp
+	Message       string                 `protobuf:"bytes,6,opt,name=message,proto3" json:"message,omitempty"`      // Optional detail, e.g. OSC 9 notification
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1614,6 +1615,13 @@ func (x *SessionEvent) GetTimestamp() int64 {
 		return x.Timestamp
 	}
 	return 0
+}
+
+func (x *SessionEvent) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
 }
 
 type ListEventsRequest struct {
@@ -3183,14 +3191,15 @@ const file_proto_hqssh_proto_rawDesc = "" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x12\n" +
 	"\x04cols\x18\x02 \x01(\x05R\x04cols\x12\x12\n" +
 	"\x04rows\x18\x03 \x01(\x05R\x04rows\"\x14\n" +
-	"\x12WatchEventsRequest\"\xaf\x01\n" +
+	"\x12WatchEventsRequest\"\xc9\x01\n" +
 	"\fSessionEvent\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12!\n" +
 	"\fsession_name\x18\x02 \x01(\tR\vsessionName\x12\x12\n" +
 	"\x04tool\x18\x03 \x01(\tR\x04tool\x12+\n" +
 	"\x04type\x18\x04 \x01(\x0e2\x17.hqssh.SessionEventTypeR\x04type\x12\x1c\n" +
-	"\ttimestamp\x18\x05 \x01(\x03R\ttimestamp\")\n" +
+	"\ttimestamp\x18\x05 \x01(\x03R\ttimestamp\x12\x18\n" +
+	"\amessage\x18\x06 \x01(\tR\amessage\")\n" +
 	"\x11ListEventsRequest\x12\x14\n" +
 	"\x05limit\x18\x01 \x01(\x05R\x05limit\"A\n" +
 	"\x12ListEventsResponse\x12+\n" +

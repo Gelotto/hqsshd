@@ -260,6 +260,12 @@ func TestExecutor_BuildCommand_Codex(t *testing.T) {
 	cmd := e.buildCommand(task, "/tmp")
 
 	args := strings.Join(cmd.Args, " ")
+	if !strings.Contains(args, "codex exec") {
+		t.Errorf("codex args should use the headless exec subcommand: %s", args)
+	}
+	if !strings.Contains(args, "--skip-git-repo-check") {
+		t.Errorf("codex args should contain --skip-git-repo-check: %s", args)
+	}
 	if !strings.Contains(args, "generate code") {
 		t.Errorf("codex args should contain prompt: %s", args)
 	}

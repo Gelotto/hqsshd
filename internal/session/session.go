@@ -224,7 +224,7 @@ func (s *Session) SetEventCallback(fn func(Event)) {
 }
 
 // emitEvent invokes the event callback with a snapshot of session identity
-func (s *Session) emitEvent(t EventType) {
+func (s *Session) emitEvent(t EventType, message string) {
 	if s.onEvent == nil {
 		return
 	}
@@ -234,6 +234,7 @@ func (s *Session) emitEvent(t EventType) {
 		Tool:        s.Tool,
 		Type:        t,
 		Timestamp:   time.Now(),
+		Message:     message,
 	})
 }
 
@@ -258,7 +259,7 @@ func (s *Session) markDone() {
 		)
 
 		close(s.done)
-		s.emitEvent(EventTypeEnded)
+		s.emitEvent(EventTypeEnded, "")
 	})
 }
 

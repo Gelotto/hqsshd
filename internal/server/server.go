@@ -1069,6 +1069,7 @@ func sessionEventToProto(e session.Event) *pb.SessionEvent {
 		Tool:        e.Tool,
 		Type:        t,
 		Timestamp:   e.Timestamp.Unix(),
+		Message:     e.Message,
 	}
 }
 

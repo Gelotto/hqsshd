@@ -53,6 +53,9 @@ type Event struct {
 	Tool        string
 	Type        EventType
 	Timestamp   time.Time
+	// Message carries optional detail — the OSC 9 notification text for bell
+	// events (e.g. Codex's "Approval requested"). Empty for bare bells.
+	Message string
 }
 
 // maxRecentEvents bounds the in-memory event history ring buffer.

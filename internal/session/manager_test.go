@@ -278,3 +278,64 @@ func TestManager_CountExcludesEnded(t *testing.T) {
 		t.Errorf("Count() = %d, want 1 (excluding ended)", count)
 	}
 }
+
+// TestManager_AttachTriggersRepaintSignal verifies that attaching a client
+// sends SIGWINCH to the session process even when the attach dimensions
+// match the PTY (a same-size resize produces no kernel SIGWINCH, and
+// diff-rendering TUIs like Codex never repaint for the new client without
+// one). The shell traps WINCH and prints a marker; quote-splitting in the
+// typed command keeps the PTY input echo from matching the marker.
+func TestManager_AttachTriggersRepaintSignal(t *testing.T) {
+	m := NewManager(3600, 20, 10000, t.TempDir(), "", 0, 64, 0)
+	defer m.Close()
+
+	sess, err := m.Create("", "shell", "/tmp", "", nil, 80, 24)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// Observation client. Its own attach fires a repaint signal too, but
+	// the trap is not installed yet, so it is inert.
+	_, ch, _, err := m.Attach(sess.ID, 80, 24)
+	if err != nil {
+		t.Fatalf("Attach (observer): %v", err)
+	}
+
+	waitForOutput := func(marker string, timeout time.Duration) bool {
+		var buf strings.Builder
+		deadline := time.After(timeout)
+		for {
+			select {
+			case chunk, ok := <-ch:
+				if !ok {
+					return false
+				}
+				buf.Write(chunk)
+				if strings.Contains(buf.String(), marker) {
+					return true
+				}
+			case <-deadline:
+				t.Logf("timed out waiting for %q; output: %q", marker, buf.String())
+				return false
+			}
+		}
+	}
+
+	if _, err := sess.Write([]byte("trap 'echo RE''PAINT-MARK' WINCH; echo TRAP''-READY\n")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	// TRAP-READY only appears unsplit once the line has executed, which
+	// also means the trap is installed.
+	if !waitForOutput("TRAP-READY", 10*time.Second) {
+		t.Fatal("shell did not become ready")
+	}
+
+	// Re-attach at the SAME dimensions: the resize is a no-op, so the
+	// marker can only come from the explicit repaint signal.
+	if _, _, _, err := m.Attach(sess.ID, 80, 24); err != nil {
+		t.Fatalf("Attach (same size): %v", err)
+	}
+	if !waitForOutput("REPAINT-MARK", 5*time.Second) {
+		t.Fatal("no repaint marker after same-size attach — SIGWINCH not delivered")
+	}
+}

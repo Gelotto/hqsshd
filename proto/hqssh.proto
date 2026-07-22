@@ -249,6 +249,9 @@ message SessionEvent {
   string tool = 3;
   SessionEventType type = 4;
   int64 timestamp = 5;              // Unix timestamp
+  string message = 6;               // Optional detail, e.g. OSC 9 notification
+                                    // text ("Approval requested"). Empty for
+                                    // bare bells and older daemons.
 }
 
 message ListEventsRequest {

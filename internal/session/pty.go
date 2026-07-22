@@ -213,11 +213,15 @@ func (s *Session) readPTYOutput() {
 				}
 			}
 
-			// Emit attention event on bare terminal bell (AI CLIs ring it
-			// when finished or awaiting input), rate-limited per session
-			if s.bell.process(data) && time.Since(s.lastBellEvent) >= bellEventCooldown {
+			// Emit attention event on bare terminal bell or OSC 9
+			// notification (AI CLIs signal "finished / awaiting input" via
+			// either), rate-limited per session. The cooldown can drop the
+			// message of an OSC 9 arriving shortly after a bare bell —
+			// accepted, since tools use one channel or the other.
+			if res := s.bell.process(data); res.attention() &&
+				time.Since(s.lastBellEvent) >= bellEventCooldown {
 				s.lastBellEvent = time.Now()
-				s.emitEvent(EventTypeBell)
+				s.emitEvent(EventTypeBell, res.lastMessage())
 			}
 		}
 	}
@@ -262,6 +266,25 @@ func (s *Session) Resize(cols, rows int) error {
 	}
 
 	return pty.Setsize(s.pty, size)
+}
+
+// SignalRepaint sends SIGWINCH to the session's process group so
+// full-screen TUIs redraw their current frame. Needed on client attach:
+// the attach-time resize only triggers a kernel SIGWINCH when dimensions
+// actually change, so a client re-attaching at the same size would only see
+// the raw scrollback replay — diff-rendering TUIs (e.g. Codex) never
+// re-emit a full frame without a nudge. Shells ignore SIGWINCH.
+func (s *Session) SignalRepaint() {
+	if s.cmd == nil || s.IsDone() {
+		return
+	}
+	// Negative PID targets the process group (setsid makes PID = PGID).
+	if err := syscall.Kill(-s.cmd.Pid, syscall.SIGWINCH); err != nil {
+		logging.Debug("SIGWINCH to process group failed",
+			"session_id", s.ID,
+			"error", err,
+		)
+	}
 }
 
 // Kill terminates the session's process and its entire process group.

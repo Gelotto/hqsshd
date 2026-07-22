@@ -87,7 +87,11 @@ func (w *WebhookNotifier) send(event session.Event) {
 	var body, title, priority, tags string
 	switch event.Type {
 	case session.EventTypeBell:
-		body = fmt.Sprintf("%s needs attention", name)
+		if event.Message != "" {
+			body = fmt.Sprintf("%s: %s", name, event.Message)
+		} else {
+			body = fmt.Sprintf("%s needs attention", name)
+		}
 		title = "Agent needs attention"
 		priority = "high"
 		tags = "bell"

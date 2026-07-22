@@ -303,7 +303,10 @@ func (e *Executor) buildCommand(task *Task, workingDir string) *exec.Cmd {
 		// Prompt passed as $1 to prevent shell expansion
 		cmd = exec.Command(shell, "-l", "-c", `claude --print "$1"`, "_", task.Prompt)
 	case "codex":
-		cmd = exec.Command(shell, "-l", "-c", `codex "$1"`, "_", task.Prompt)
+		// Codex exec subcommand for headless mode (bare codex opens the
+		// interactive TUI). --skip-git-repo-check because system-scoped
+		// tasks may run outside a git repository.
+		cmd = exec.Command(shell, "-l", "-c", `codex exec --skip-git-repo-check "$1"`, "_", task.Prompt)
 	case "aider":
 		// Aider with --yes for non-interactive
 		cmd = exec.Command(shell, "-l", "-c", `aider --yes --message "$1"`, "_", task.Prompt)

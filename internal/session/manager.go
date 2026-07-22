@@ -369,6 +369,11 @@ func (m *Manager) Attach(sessionID string, cols, rows int) (string, <-chan []byt
 	// register the client so no PTY output falls between the two
 	scrollback, outputCh := sess.AttachClient(clientID, m.clientBufferSize)
 
+	// Ask the process to repaint now that the client is registered — its
+	// redraw broadcasts after the replay snapshot, giving the client a
+	// fresh frame even when the attach resize was a same-size no-op.
+	sess.SignalRepaint()
+
 	logging.Info("client attached",
 		"session_id", sessionID,
 		"client_id", clientID,

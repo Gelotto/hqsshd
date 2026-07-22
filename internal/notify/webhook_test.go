@@ -74,6 +74,27 @@ func TestWebhookNotifierDeliversEvents(t *testing.T) {
 	}
 
 	hub.Publish(session.Event{
+		SessionID:   "abc-456",
+		SessionName: "myapp/codex-cd34",
+		Tool:        "codex",
+		Type:        session.EventTypeBell,
+		Timestamp:   time.Now(),
+		Message:     "Approval requested",
+	})
+
+	select {
+	case req := <-received:
+		if req.body != "myapp/codex-cd34: Approval requested" {
+			t.Errorf("bell-with-message body = %q", req.body)
+		}
+		if got := req.headers.Get("Title"); got != "Agent needs attention" {
+			t.Errorf("Title header = %q", got)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("bell event with message was not delivered")
+	}
+
+	hub.Publish(session.Event{
 		SessionID:   "abc-123",
 		SessionName: "myapp/claude-ab12",
 		Tool:        "claude",
