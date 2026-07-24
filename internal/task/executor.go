@@ -28,6 +28,7 @@ import (
 	"github.com/creack/pty"
 	"github.com/gelotto/hqsshd/internal/config"
 	"github.com/gelotto/hqsshd/internal/logging"
+	"github.com/gelotto/hqsshd/internal/shellutil"
 )
 
 const (
@@ -286,14 +287,7 @@ func (e *Executor) executeTask(task *Task, run *Run, projectPath string) {
 // tools installed via nvm/pyenv/asdf are available on PATH.
 // Prompts are passed as positional arguments ($1) to prevent shell injection.
 func (e *Executor) buildCommand(task *Task, workingDir string) *exec.Cmd {
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = "/bin/bash"
-	}
-	// Verify the shell binary exists
-	if _, err := os.Stat(shell); err != nil {
-		shell = "/bin/sh"
-	}
+	shell := shellutil.UserShell()
 
 	var cmd *exec.Cmd
 

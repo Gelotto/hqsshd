@@ -24,6 +24,7 @@ import (
 	"github.com/gelotto/hqsshd/internal/config"
 	"github.com/gelotto/hqsshd/internal/logging"
 	"github.com/gelotto/hqsshd/internal/server"
+	"github.com/gelotto/hqsshd/internal/shellutil"
 )
 
 func main() {
@@ -103,6 +104,10 @@ func main() {
 		"log_level", cfg.Log.Level,
 		"pid", os.Getpid(),
 	)
+
+	// Service managers (launchd, systemd) start the daemon with a minimal
+	// PATH that misses per-user tool installs (e.g. claude in ~/.local/bin).
+	shellutil.EnsureUserPATH()
 
 	// Create server
 	srv, err := server.NewServer(cfg)

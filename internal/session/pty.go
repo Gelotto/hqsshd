@@ -25,6 +25,7 @@ import (
 	"github.com/creack/pty"
 	"github.com/gelotto/hqsshd/internal/config"
 	"github.com/gelotto/hqsshd/internal/logging"
+	"github.com/gelotto/hqsshd/internal/shellutil"
 )
 
 // StartPTY starts the PTY process for the session
@@ -87,19 +88,7 @@ func (s *Session) buildCommand() (*exec.Cmd, error) {
 		return nil, fmt.Errorf("invalid tool name: %q", s.Tool)
 	}
 
-	// Get and validate user's login shell
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = "/bin/bash"
-	}
-	// Verify the shell binary exists
-	if _, err := os.Stat(shell); err != nil {
-		logging.Warn("configured SHELL not found, falling back to /bin/sh",
-			"shell", shell,
-			"error", err,
-		)
-		shell = "/bin/sh"
-	}
+	shell := shellutil.UserShell()
 
 	var cmd *exec.Cmd
 

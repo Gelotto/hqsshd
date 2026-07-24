@@ -15,13 +15,13 @@
 package tools
 
 import (
-	"os"
 	"os/exec"
 	"strings"
 	"sync"
 
 	"github.com/gelotto/hqsshd/internal/config"
 	"github.com/gelotto/hqsshd/internal/logging"
+	"github.com/gelotto/hqsshd/internal/shellutil"
 )
 
 // Detector detects installed AI CLI tools
@@ -132,17 +132,7 @@ func (d *Detector) detectTool(tool config.ToolConfig) bool {
 		return false
 	}
 
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = "/bin/bash"
-	}
-	if _, err := os.Stat(shell); err != nil {
-		logging.Warn("configured SHELL not found, falling back to /bin/sh",
-			"shell", shell,
-			"error", err,
-		)
-		shell = "/bin/sh"
-	}
+	shell := shellutil.UserShell()
 
 	cmd := exec.Command(shell, "-l", "-c", tool.Detect)
 	err := cmd.Run()
@@ -157,17 +147,7 @@ func (d *Detector) detectViaLoginShell(command string) bool {
 		return false
 	}
 
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = "/bin/bash"
-	}
-	if _, err := os.Stat(shell); err != nil {
-		logging.Warn("configured SHELL not found, falling back to /bin/sh",
-			"shell", shell,
-			"error", err,
-		)
-		shell = "/bin/sh"
-	}
+	shell := shellutil.UserShell()
 
 	// Use "command -v" (POSIX builtin, safer than "which")
 	cmd := exec.Command(shell, "-l", "-c", "command -v "+command)
