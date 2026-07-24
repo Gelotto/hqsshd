@@ -39,7 +39,7 @@ hqsshd provides session persistence and multi-client access for AI coding assist
 curl -fsSL https://hqssh.com/install | sh
 ```
 
-This downloads the latest release, verifies the checksum, installs both binaries (`hqsshd` + `hqssh`), and sets up a systemd user service. Re-run to update.
+This downloads the latest release, verifies the checksum, installs both binaries (`hqsshd` + `hqssh`), and sets up a background service — a systemd user service on Linux, a launchd user agent on macOS. Re-run to update.
 
 To pin a specific version:
 
@@ -97,7 +97,7 @@ make build
 make install-user  # Installs to ~/.local/bin
 ```
 
-### Systemd Service (Recommended)
+### Systemd Service (Linux, Recommended)
 
 Install as a user service for auto-start:
 
@@ -113,6 +113,25 @@ systemctl --user start hqsshd
 
 # View logs
 journalctl --user -u hqsshd -f
+```
+
+### Launchd Agent (macOS, Recommended)
+
+The [Quick Install](#quick-install) script sets this up automatically (label
+`com.gelotto.hqsshd`, plist in `~/Library/LaunchAgents`). If you installed
+manually, re-running the installer with the binaries already in place still
+writes and loads the agent, or you can manage it directly:
+
+```bash
+# Load / start
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.gelotto.hqsshd.plist
+launchctl kickstart -k "gui/$(id -u)/com.gelotto.hqsshd"
+
+# Stop / unload
+launchctl bootout "gui/$(id -u)/com.gelotto.hqsshd"
+
+# View logs
+tail -f ~/.hqssh/logs/hqsshd.log
 ```
 
 ## Usage

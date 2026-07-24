@@ -11,7 +11,12 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # Both release platforms: procscan, shell resolution, and PTY handling
+    # have platform-specific code that only real linux/darwin runs exercise.
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4 # Pin to SHA in production
 

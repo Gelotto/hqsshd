@@ -1,5 +1,4 @@
 .PHONY: build proto install install-user clean deps run tidy test test-race test-coverage test-verbose test-short
-.PHONY: $(BUILD_DIR)/$(DAEMON_BINARY) $(BUILD_DIR)/$(CLI_BINARY)
 
 # Go parameters
 GOCMD=go
@@ -13,6 +12,11 @@ CLI_BINARY=hqssh
 
 # Build directory
 BUILD_DIR=bin
+
+# The binary targets are phony so an existing bin/ artifact never suppresses
+# a rebuild (make has no Go dependency tracking). Must come after the
+# variable definitions above — .PHONY expands its arguments immediately.
+.PHONY: $(BUILD_DIR)/$(DAEMON_BINARY) $(BUILD_DIR)/$(CLI_BINARY)
 
 # Version injection
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
