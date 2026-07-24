@@ -13,17 +13,20 @@
 // limitations under the License.
 
 // Package procscan discovers AI CLI processes (claude, codex, aider) running
-// outside daemon management by scanning /proc. Such "external sessions" were
-// started from a regular terminal (e.g. an SSH shell), so they cannot be
-// attached to, but they can be listed per project and terminated.
+// outside daemon management. Such "external sessions" were started from a
+// regular terminal (e.g. an SSH shell), so they cannot be attached to, but
+// they can be listed per project and terminated.
+//
+// Process enumeration is platform-specific: /proc on Linux
+// (procscan_linux.go), sysctl + lsof on macOS (procscan_darwin.go). Each
+// platform file implements listProcesses, readArgv, and cwdFor; everything
+// else is shared.
 package procscan
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -39,6 +42,13 @@ type ExternalSession struct {
 	WorkingDir string
 	StartedAt  time.Time // Zero if unknown
 	Command    string    // Display command line (truncated)
+}
+
+// procInfo is one process from the platform's process table.
+type procInfo struct {
+	ppid      int
+	startedAt time.Time // Zero if unknown
+	argv      []string  // nil if unreadable (other user, kernel thread, vanished)
 }
 
 // interpreters whose first script argument names the real tool
@@ -61,14 +71,10 @@ const maxCommandDisplay = 160
 // before it is SIGKILLed.
 const killGracePeriod = 3 * time.Second
 
-// userHZ is the kernel clock tick rate used for /proc starttime. Linux has
-// reported 100 to userspace on all mainstream architectures for decades.
-const userHZ = 100
-
-// Scan returns external AI tool processes visible in /proc. Processes that
-// are descendants of any pid in excludeRoots (typically the daemon itself,
-// so daemon-managed sessions aren't double-reported) are skipped, as are
-// processes whose cwd can't be read (other users' processes).
+// Scan returns external AI tool processes. Processes that are descendants of
+// any pid in excludeRoots (typically the daemon itself, so daemon-managed
+// sessions aren't double-reported) are skipped, as are processes whose cwd
+// can't be read (other users' processes).
 func Scan(tools []string, excludeRoots []int) []ExternalSession {
 	toolSet := make(map[string]bool, len(tools))
 	for _, t := range tools {
@@ -79,82 +85,54 @@ func Scan(tools []string, excludeRoots []int) []ExternalSession {
 		rootSet[p] = true
 	}
 
-	entries, err := os.ReadDir("/proc")
-	if err != nil {
-		// Non-Linux or /proc unavailable - nothing to report
+	procs := listProcesses()
+	if len(procs) == 0 {
 		return nil
 	}
 
-	// First pass: pid -> ppid for ancestry checks, pid -> starttime.
-	ppids := make(map[int]int)
-	starts := make(map[int]uint64)
-	pids := make([]int, 0, len(entries))
-	for _, e := range entries {
-		pid, err := strconv.Atoi(e.Name())
-		if err != nil {
-			continue
-		}
-		ppid, starttime, err := parseStat(pid)
-		if err != nil {
-			continue // Process vanished mid-scan
-		}
-		ppids[pid] = ppid
-		starts[pid] = starttime
-		pids = append(pids, pid)
+	ppids := make(map[int]int, len(procs))
+	for pid, p := range procs {
+		ppids[pid] = p.ppid
 	}
 
-	boot := bootTime()
-
-	// Second pass: match tools by cmdline. Kept separate so parent/child
+	// Match tools by argv. Kept separate from filtering so parent/child
 	// pairs that both match (e.g. a "node .../codex" shim and the native
 	// binary it spawns) can be collapsed to the top-most process below.
 	matched := make(map[int]string)
-	argvs := make(map[int][]string)
-	for _, pid := range pids {
-		argv, err := readCmdline(pid)
-		if err != nil || len(argv) == 0 {
-			continue // Vanished or kernel thread
+	for pid, p := range procs {
+		if len(p.argv) == 0 {
+			continue
 		}
-		if tool := toolFromArgv(argv, toolSet); tool != "" {
+		if tool := toolFromArgv(p.argv, toolSet); tool != "" {
 			matched[pid] = tool
-			argvs[pid] = argv
 		}
 	}
 
-	var result []ExternalSession
-	for _, pid := range pids {
-		tool, ok := matched[pid]
-		if !ok {
-			continue
-		}
-		argv := argvs[pid]
-
+	var candidates []int
+	for pid, tool := range matched {
 		if isDescendant(pid, rootSet, ppids) {
 			continue // Daemon-managed session (or other excluded subtree)
 		}
-
 		if hasMatchedAncestor(pid, tool, matched, ppids) {
 			continue // Child of the same logical session (shim -> binary)
 		}
+		candidates = append(candidates, pid)
+	}
 
-		cwd, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid))
-		if err != nil {
-			continue // Not our process (EACCES) or vanished
+	cwds := cwdFor(candidates)
+
+	var result []ExternalSession
+	for _, pid := range candidates {
+		cwd, ok := cwds[pid]
+		if !ok {
+			continue // Not our process or vanished mid-scan
 		}
-
-		var startedAt time.Time
-		if !boot.IsZero() {
-			// Divide ticks first: ticks * time.Second overflows int64 once
-			// uptime passes ~2.9 years. Sub-second precision is irrelevant.
-			startedAt = boot.Add(time.Duration(starts[pid]/userHZ) * time.Second)
-		}
-
 		result = append(result, ExternalSession{
 			PID:        pid,
-			Tool:       tool,
+			Tool:       matched[pid],
 			WorkingDir: strings.ToValidUTF8(cwd, "�"),
-			StartedAt:  startedAt,
-			Command:    displayCommand(argv),
+			StartedAt:  procs[pid].startedAt,
+			Command:    displayCommand(procs[pid].argv),
 		})
 	}
 
@@ -229,7 +207,7 @@ func displayCommand(argv []string) string {
 
 // verifyTool checks that pid is currently running the given tool.
 func verifyTool(pid int, tool string, toolSet map[string]bool) error {
-	argv, err := readCmdline(pid)
+	argv, err := readArgv(pid)
 	if err != nil {
 		return fmt.Errorf("process %d not found", pid)
 	}
@@ -302,70 +280,4 @@ func isDescendant(pid int, roots map[int]bool, ppids map[int]int) bool {
 		pid = ppid
 	}
 	return false
-}
-
-// readCmdline reads a process's NUL-separated argv.
-func readCmdline(pid int) ([]string, error) {
-	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
-	if err != nil {
-		return nil, err
-	}
-	parts := strings.Split(strings.TrimRight(string(data), "\x00"), "\x00")
-	if len(parts) == 1 && parts[0] == "" {
-		return nil, nil
-	}
-	return parts, nil
-}
-
-// parseStat extracts ppid and starttime (clock ticks since boot) from
-// /proc/<pid>/stat. The comm field may contain spaces and parentheses, so
-// fields are located relative to the LAST ')'.
-func parseStat(pid int) (ppid int, starttime uint64, err error) {
-	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
-	if err != nil {
-		return 0, 0, err
-	}
-	return parseStatData(string(data))
-}
-
-func parseStatData(data string) (ppid int, starttime uint64, err error) {
-	end := strings.LastIndexByte(data, ')')
-	if end < 0 {
-		return 0, 0, fmt.Errorf("malformed stat")
-	}
-	// After ")": state(0) ppid(1) pgrp(2) session(3) tty(4) tpgid(5) flags(6)
-	// minflt(7) cminflt(8) majflt(9) cmajflt(10) utime(11) stime(12)
-	// cutime(13) cstime(14) priority(15) nice(16) threads(17) itreal(18)
-	// starttime(19)
-	fields := strings.Fields(data[end+1:])
-	if len(fields) < 20 {
-		return 0, 0, fmt.Errorf("malformed stat: %d fields", len(fields))
-	}
-	ppid, err = strconv.Atoi(fields[1])
-	if err != nil {
-		return 0, 0, fmt.Errorf("malformed ppid: %w", err)
-	}
-	starttime, err = strconv.ParseUint(fields[19], 10, 64)
-	if err != nil {
-		return 0, 0, fmt.Errorf("malformed starttime: %w", err)
-	}
-	return ppid, starttime, nil
-}
-
-// bootTime returns the system boot time from /proc/stat, or zero if unknown.
-func bootTime() time.Time {
-	data, err := os.ReadFile("/proc/stat")
-	if err != nil {
-		return time.Time{}
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		if rest, ok := strings.CutPrefix(line, "btime "); ok {
-			secs, err := strconv.ParseInt(strings.TrimSpace(rest), 10, 64)
-			if err != nil {
-				return time.Time{}
-			}
-			return time.Unix(secs, 0)
-		}
-	}
-	return time.Time{}
 }

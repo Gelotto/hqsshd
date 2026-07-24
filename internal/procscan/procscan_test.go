@@ -15,7 +15,6 @@
 package procscan
 
 import (
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -81,27 +80,6 @@ func TestDisplayCommand(t *testing.T) {
 	}
 }
 
-func TestParseStatData(t *testing.T) {
-	// comm containing spaces and parentheses must not break field offsets
-	stat := "55648 (my (weird) comm) S 55565 55648 55565 34816 55648 4194304 " +
-		"100 0 0 0 5 3 0 0 20 0 8 0 123456 1000000 500 18446744073709551615 1 1 0 0 0 0 0 0 0 0 0 0 17 3 0 0 0 0 0"
-
-	ppid, starttime, err := parseStatData(stat)
-	if err != nil {
-		t.Fatalf("parseStatData: %v", err)
-	}
-	if ppid != 55565 {
-		t.Errorf("ppid = %d, want 55565", ppid)
-	}
-	if starttime != 123456 {
-		t.Errorf("starttime = %d, want 123456", starttime)
-	}
-
-	if _, _, err := parseStatData("garbage with no paren"); err == nil {
-		t.Error("expected error for malformed stat")
-	}
-}
-
 func TestIsDescendant(t *testing.T) {
 	// 100 -> 50 -> 10 -> 1
 	ppids := map[int]int{100: 50, 50: 10, 10: 1}
@@ -129,28 +107,21 @@ func TestIsDescendant(t *testing.T) {
 // cwd, excluded when the test process is an exclusion root, and terminated
 // by Kill.
 func TestScanAndKill(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("procscan requires /proc")
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		t.Skip("external session discovery is only implemented for linux and darwin")
 	}
 
-	// Copy /bin/sleep to <tmp>/hqfaketool so argv[0] basename matches
+	// Run /bin/sleep with argv[0] overridden to <tmp>/hqfaketool: the scan
+	// matches on argv[0]'s basename, and executing the real binary avoids
+	// macOS killing copies of trust-cached system binaries as unsigned.
 	dir := t.TempDir()
 	fake := filepath.Join(dir, "hqfaketool")
-	src, err := os.Open("/bin/sleep")
-	if err != nil {
+	if _, err := os.Stat("/bin/sleep"); err != nil {
 		t.Skipf("no /bin/sleep: %v", err)
 	}
-	dst, err := os.OpenFile(fake, os.O_CREATE|os.O_WRONLY, 0o755)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := io.Copy(dst, src); err != nil {
-		t.Fatal(err)
-	}
-	src.Close()
-	dst.Close()
 
-	cmd := exec.Command(fake, "60")
+	cmd := exec.Command("/bin/sleep", "60")
+	cmd.Args = []string{fake, "60"}
 	cmd.Dir = dir
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
