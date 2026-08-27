@@ -15,8 +15,11 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"runtime"
+	"time"
 
 	"github.com/gelotto/hqsshd/internal/cli/config"
 	daemonconfig "github.com/gelotto/hqsshd/internal/config"
@@ -74,6 +77,9 @@ CONFIG:
 
 CONNECTION PRIORITY:
   -S/--socket flag > -H/--host flag > config/env > local socket auto-detect`,
+	// Runtime errors (no daemon, connection refused) carry their own advice;
+	// dumping the usage text after them buries it.
+	SilenceUsage: true,
 }
 
 func init() {
@@ -85,6 +91,10 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&usePassword, "password", "p", false, "Prompt for SSH password")
 	rootCmd.PersistentFlags().BoolVar(&insecureKey, "insecure", false, "Skip host key verification")
 	rootCmd.PersistentFlags().StringVarP(&socket, "socket", "S", "", "Unix socket path (local daemon)")
+
+	// `hqssh --version` / `-v`
+	rootCmd.Version = buildVersion()
+	rootCmd.SetVersionTemplate("hqssh {{.Version}}\n")
 
 	// Add subcommands
 	rootCmd.AddCommand(sessionsCmd)
@@ -135,10 +145,29 @@ func promptPassword() (string, error) {
 	return string(pw), nil
 }
 
+// buildVersion renders the build version shared by hqssh and hqsshd, e.g.
+// "v1.4.0 (commit abc1234, darwin/arm64)". DaemonVersion already carries
+// its "v" prefix when set from a tag.
+func buildVersion() string {
+	return fmt.Sprintf("%s (commit %s, %s/%s)",
+		daemonconfig.DaemonVersion, daemonconfig.Commit, runtime.GOOS, runtime.GOARCH)
+}
+
 var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print version information",
+	Long:  "Print the hqssh build version, and the version of the local daemon when one is running.",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Printf("hqssh CLI v%s\n", daemonconfig.DaemonVersion)
+		fmt.Printf("hqssh %s\n", buildVersion())
+
+		// Best effort: ask a local daemon for its version
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		info, st, err := queryLocalDaemon(ctx, localSocketPath())
+		if err != nil {
+			fmt.Println("daemon: not running")
+			return
+		}
+		fmt.Printf("daemon: hqsshd %s (%s)\n", info.GetDaemonVersion(), pidLabel(st.GetPid()))
 	},
 }

@@ -24,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gelotto/hqsshd/internal/config"
 	pb "github.com/gelotto/hqsshd/proto"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
@@ -325,14 +326,86 @@ func (c *Client) Close() error {
 	return nil
 }
 
-// ConnectLocal connects to the daemon via a Unix socket (no SSH tunnel).
+// DefaultTCPAddr is where the daemon listens for SSH-tunnelled clients.
+const DefaultTCPAddr = "127.0.0.1:50051"
+
+// ProbeSocket reports whether something is listening at the Unix socket:
+// nil when a connect succeeds, an error satisfying os.IsNotExist when the
+// file is absent, syscall.ECONNREFUSED (via errors.Is) when the file exists
+// but no daemon owns it (crashed or SIGKILLed).
+func ProbeSocket(path string, timeout time.Duration) error {
+	conn, err := net.DialTimeout("unix", path, timeout)
+	if err != nil {
+		return err
+	}
+	conn.Close()
+	return nil
+}
+
+// tokenCreds sends the daemon's auth_token on every RPC, in the same
+// "authorization: Bearer <token>" form the mobile app uses.
+type tokenCreds struct{ token string }
+
+func (t tokenCreds) GetRequestMetadata(context.Context, ...string) (map[string]string, error) {
+	return map[string]string{"authorization": "Bearer " + t.token}, nil
+}
+
+func (tokenCreds) RequireTransportSecurity() bool { return false }
+
+// localDialOptions builds the options for a loopback connection (no TLS;
+// the transport is a Unix socket or 127.0.0.1) plus the auth token when
+// the daemon requires one.
+func localDialOptions(token string) []grpc.DialOption {
+	opts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
+	if token != "" {
+		opts = append(opts, grpc.WithPerRPCCredentials(tokenCreds{token: token}))
+	}
+	return opts
+}
+
+// LocalAuthToken returns the auth_token from ~/.hqssh/daemon.yaml ("" when
+// unset or unreadable). A local client runs as the daemon's user and may
+// read its config, so the token never has to be typed.
+func LocalAuthToken() string {
+	cfg, err := config.Load()
+	if err != nil || cfg == nil {
+		return ""
+	}
+	return cfg.AuthToken
+}
+
+// ConnectTCP connects to the daemon's loopback TCP listener directly (no
+// SSH), sending the local auth token if the daemon requires one. Used by
+// `hqssh doctor` to check the transport the mobile app uses.
+func ConnectTCP(ctx context.Context, addr string) (*Client, error) {
+	return ConnectTCPWithToken(ctx, addr, LocalAuthToken())
+}
+
+// ConnectTCPWithToken is ConnectTCP with an explicit auth token ("" = none).
+func ConnectTCPWithToken(ctx context.Context, addr, token string) (*Client, error) {
+	grpcConn, err := grpc.NewClient(addr, localDialOptions(token)...)
+	if err != nil {
+		return nil, fmt.Errorf("gRPC connect to %s: %w", addr, err)
+	}
+	return newLocalClient(grpcConn), nil
+}
+
+// ConnectLocal connects to the daemon via a Unix socket (no SSH tunnel),
+// sending the local auth token if the daemon requires one.
 func ConnectLocal(ctx context.Context, socketPath string) (*Client, error) {
-	grpcConn, err := grpc.NewClient("unix:"+socketPath,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
+	return ConnectLocalWithToken(ctx, socketPath, LocalAuthToken())
+}
+
+// ConnectLocalWithToken is ConnectLocal with an explicit auth token ("" = none).
+func ConnectLocalWithToken(ctx context.Context, socketPath, token string) (*Client, error) {
+	grpcConn, err := grpc.NewClient("unix:"+socketPath, localDialOptions(token)...)
 	if err != nil {
 		return nil, fmt.Errorf("gRPC connect to %s: %w", socketPath, err)
 	}
+	return newLocalClient(grpcConn), nil
+}
+
+func newLocalClient(grpcConn *grpc.ClientConn) *Client {
 
 	c := &Client{
 		grpcConn: grpcConn,
@@ -341,8 +414,7 @@ func ConnectLocal(ctx context.Context, socketPath string) (*Client, error) {
 	c.ProjectService = pb.NewProjectServiceClient(grpcConn)
 	c.SystemService = pb.NewSystemServiceClient(grpcConn)
 	c.TaskService = pb.NewTaskServiceClient(grpcConn)
-
-	return c, nil
+	return c
 }
 
 func buildSSHConfig(cfg Config) (*ssh.ClientConfig, error) {
