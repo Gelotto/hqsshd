@@ -121,7 +121,7 @@ jobs:
           sleep 2
 
       - name: doctor
-        run: "$HQSSH_INSTALL_DIR/hqssh" doctor
+        run: '"$HQSSH_INSTALL_DIR/hqssh" doctor'
 
       - name: Restart via the CLI, then doctor again
         if: env.HQSSH_NO_SERVICE != '1'
