@@ -22,6 +22,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/gelotto/hqsshd/internal/fsutil"
 )
 
 const tasksFile = "tasks.json"
@@ -72,6 +74,7 @@ func (s *Store) Load() error {
 	defer s.mu.Unlock()
 
 	path := filepath.Join(s.dataDir, tasksFile)
+	fsutil.RemoveStaleTemps(path)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -113,13 +116,8 @@ func (s *Store) Save() error {
 		return err
 	}
 
-	// Atomic write: write to temp file then rename to avoid corruption on crash
-	path := filepath.Join(s.dataDir, tasksFile)
-	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
-		return err
-	}
-	return os.Rename(tmpPath, path)
+	// Atomic write (temp file + rename); temp is cleaned up on failure
+	return fsutil.WriteFileAtomic(filepath.Join(s.dataDir, tasksFile), data, 0600)
 }
 
 // Create creates a new task

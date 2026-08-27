@@ -39,12 +39,14 @@ message SystemInfo {
   string arch = 3;
   string daemon_version = 4;
   repeated string installed_tools = 5;  // ['claude', 'codex', 'aider']
+  string commit = 6;                    // Git commit the daemon was built from
 }
 
 message SystemStatus {
   int64 uptime_seconds = 1;
   int32 active_sessions = 2;
   int32 active_projects = 3;
+  int32 pid = 4;                        // Daemon process id (0 from daemons older than v1.4.0)
 }
 
 // ============================================================================

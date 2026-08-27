@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gelotto/hqsshd/internal/fsutil"
 	"github.com/gelotto/hqsshd/internal/logging"
 )
 
@@ -64,6 +65,7 @@ func (s *Store) Load() error {
 	defer s.mu.Unlock()
 
 	path := filepath.Join(s.dataDir, sessionsFile)
+	fsutil.RemoveStaleTemps(path)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -114,16 +116,8 @@ func (s *Store) Save() error {
 		return err
 	}
 
-	// Use atomic write: write to temp file, then rename
-	// This prevents corruption if process crashes mid-write
-	path := filepath.Join(s.dataDir, sessionsFile)
-	tempPath := path + ".tmp"
-
-	if err := os.WriteFile(tempPath, data, 0600); err != nil {
-		return err
-	}
-
-	return os.Rename(tempPath, path)
+	// Atomic write (temp file + rename); temp is cleaned up on failure
+	return fsutil.WriteFileAtomic(filepath.Join(s.dataDir, sessionsFile), data, 0600)
 }
 
 // Add adds a new session record

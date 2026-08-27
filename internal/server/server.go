@@ -17,7 +17,6 @@ package server
 import (
 	"context"
 	"crypto/subtle"
-	"fmt"
 	"io"
 	"net"
 	"os"
@@ -29,14 +28,13 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
-	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
 
 	"github.com/gelotto/hqsshd/internal/config"
 	"github.com/gelotto/hqsshd/internal/logging"
 	"github.com/gelotto/hqsshd/internal/notify"
+	"github.com/gelotto/hqsshd/internal/pidfile"
 	"github.com/gelotto/hqsshd/internal/procscan"
 	"github.com/gelotto/hqsshd/internal/project"
 	"github.com/gelotto/hqsshd/internal/session"
@@ -65,6 +63,17 @@ type Server struct {
 	webhook        *notify.WebhookNotifier // nil when events.webhook_url unset
 	dataDir        string
 	startupTime    int64
+
+	// Lifecycle state (see lifecycle.go). mu serialises Listen, Serve's
+	// setup, Addrs and Stop, which run on different goroutines.
+	mu         sync.Mutex
+	pidPath    string        // ~/.hqssh/hqsshd.pid
+	pidLock    *pidfile.Lock // held while running; nil otherwise
+	socketInfo os.FileInfo   // stat of the socket we bound; nil until Listen
+	tcpPending string        // TCP addr still being retried in the background ("" when bound/disabled)
+	listening  bool          // Listen succeeded
+	stopping   chan struct{} // closed when Stop begins
+	stopOnce   sync.Once
 }
 
 // NewServer creates a new HQSSH server
@@ -73,7 +82,19 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	dataDir := homeDir + "/.hqssh"
+	dataDir := config.DataDirFor(homeDir)
+
+	// Single-instance check first: nothing below may touch shared state
+	// (sessions.json, stale temp sweeps) while another daemon is running.
+	s := &Server{
+		config:   cfg,
+		dataDir:  dataDir,
+		pidPath:  pidfile.Path(dataDir),
+		stopping: make(chan struct{}),
+	}
+	if err := s.preflight(); err != nil {
+		return nil, err
+	}
 
 	detector := tools.NewDetector(cfg)
 	discovery := project.NewDiscovery(cfg, detector)
@@ -122,199 +143,22 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		webhook.Start(sessionMgr.Events())
 	}
 
-	return &Server{
-		config:         cfg,
-		detector:       detector,
-		discovery:      discovery,
-		registry:       registry,
-		discoveryState: discoveryState,
-		sessionManager: sessionMgr,
-		taskStore:      taskStore,
-		taskRunStore:   taskRunStore,
-		taskExecutor:   taskExecutor,
-		webhook:        webhook,
-		dataDir:        dataDir,
-		startupTime:    time.Now().Unix(),
-	}, nil
+	s.detector = detector
+	s.discovery = discovery
+	s.registry = registry
+	s.discoveryState = discoveryState
+	s.sessionManager = sessionMgr
+	s.taskStore = taskStore
+	s.taskRunStore = taskRunStore
+	s.taskExecutor = taskExecutor
+	s.webhook = webhook
+	s.startupTime = time.Now().Unix()
+	return s, nil
 }
 
-// Start starts the gRPC server on both Unix socket and TCP port
-func (s *Server) Start() error {
-	// Remove existing socket file if present
-	socketPath := s.config.Socket
-	if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to remove existing socket: %w", err)
-	}
-
-	// Create Unix socket listener (don't assign to struct until all setup succeeds)
-	unixListener, err := net.Listen("unix", socketPath)
-	if err != nil {
-		return fmt.Errorf("failed to listen on socket: %w", err)
-	}
-
-	// Set socket permissions (readable/writable by owner)
-	if err := os.Chmod(socketPath, 0600); err != nil {
-		unixListener.Close()
-		return fmt.Errorf("failed to set socket permissions: %w", err)
-	}
-
-	// Create TCP listener if port is configured (for SSH tunnel forwarding)
-	// If TCP port fails to bind, log a warning but continue with Unix socket only.
-	var tcpListener net.Listener
-	if s.config.TCPPort > 0 {
-		tcpAddr := fmt.Sprintf("127.0.0.1:%d", s.config.TCPPort)
-		tcpListener, err = net.Listen("tcp", tcpAddr)
-		if err != nil {
-			logging.Warn("TCP port unavailable, continuing with Unix socket only",
-				"port", s.config.TCPPort,
-				"error", err,
-			)
-		}
-	}
-
-	// All listeners created successfully - now assign to struct
-	s.unixListener = unixListener
-	s.tcpListener = tcpListener
-
-	// Build gRPC server options
-	serverOpts := []grpc.ServerOption{
-		grpc.KeepaliveParams(keepalive.ServerParameters{
-			Time:    20 * time.Second, // Send ping every 20s if idle
-			Timeout: 5 * time.Second,  // Wait 5s for pong
-		}),
-		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
-			MinTime:             10 * time.Second, // Minimum time between client pings
-			PermitWithoutStream: true,             // Allow pings even when no streams
-		}),
-	}
-
-	// Add auth interceptors if token is configured
-	if s.config.AuthToken != "" {
-		serverOpts = append(serverOpts,
-			grpc.UnaryInterceptor(s.authUnaryInterceptor),
-			grpc.StreamInterceptor(s.authStreamInterceptor),
-		)
-		logging.Info("token-based authentication enabled")
-	}
-
-	// Create gRPC server
-	s.grpcServer = grpc.NewServer(serverOpts...)
-
-	// Create and register services
-	systemSvc := &systemService{server: s}
-	projectSvc := &projectService{server: s}
-	sessionSvc := newSessionService(s)
-	taskSvc := &taskService{server: s}
-
-	pb.RegisterSystemServiceServer(s.grpcServer, systemSvc)
-	pb.RegisterProjectServiceServer(s.grpcServer, projectSvc)
-	pb.RegisterSessionServiceServer(s.grpcServer, sessionSvc)
-	pb.RegisterTaskServiceServer(s.grpcServer, taskSvc)
-
-	// Enable gRPC reflection only when explicitly configured (off by default).
-	// Reflection exposes the full API schema, which is useful for debugging
-	// but should be disabled in production.
-	if s.config.EnableReflection {
-		reflection.Register(s.grpcServer)
-		logging.Warn("gRPC reflection enabled (disable in production)")
-	}
-
-	logging.Info("hqsshd starting",
-		"version", config.DaemonVersion,
-		"unix_socket", socketPath,
-	)
-	if s.tcpListener != nil {
-		logging.Info("TCP listener started", "addr", fmt.Sprintf("127.0.0.1:%d", s.config.TCPPort))
-	}
-
-	// Start serving on TCP listener in background goroutine
-	// Note: We can't truly verify startup before Serve() accepts first connection.
-	// Instead, we log errors so they're not silently lost.
-	if s.tcpListener != nil {
-		s.tcpWg.Add(1)
-		go func() {
-			defer s.tcpWg.Done()
-			if err := s.grpcServer.Serve(s.tcpListener); err != nil {
-				logging.Info("TCP listener stopped", "error", err)
-			}
-		}()
-	}
-
-	// Start serving on Unix socket (blocks until shutdown)
-	return s.grpcServer.Serve(s.unixListener)
-}
-
-// shutdownGracePeriod bounds how long Stop waits for in-flight RPCs before
-// forcibly terminating the gRPC server.
-const shutdownGracePeriod = 10 * time.Second
-
-// Stop gracefully stops the server
-func (s *Server) Stop() {
-	// Stop webhook delivery first (sessions closing below emit ENDED events)
-	if s.webhook != nil {
-		s.webhook.Stop()
-	}
-
-	// Close task executor first (cancels all running tasks)
-	if s.taskExecutor != nil {
-		s.taskExecutor.Close()
-	}
-
-	// Close session manager (kills all sessions), then end WatchEvents
-	// streams -- GracefulStop below waits for active RPCs, and those
-	// streams never finish on their own
-	if s.sessionManager != nil {
-		s.sessionManager.Close()
-		s.sessionManager.Events().Close()
-	}
-
-	// Gracefully stop gRPC server (stops both listeners), bounded by a
-	// deadline so a stuck client stream cannot hang shutdown forever
-	if s.grpcServer != nil {
-		stopped := make(chan struct{})
-		go func() {
-			s.grpcServer.GracefulStop()
-			close(stopped)
-		}()
-		select {
-		case <-stopped:
-		case <-time.After(shutdownGracePeriod):
-			logging.Warn("graceful stop timed out, forcing stop",
-				"timeout", shutdownGracePeriod,
-			)
-			s.grpcServer.Stop()
-			<-stopped
-		}
-	}
-
-	// Fix 6: Wait for TCP goroutine to finish
-	s.tcpWg.Wait()
-
-	// Clean up socket file
-	if s.config != nil && s.config.Socket != "" {
-		os.Remove(s.config.Socket)
-	}
-
-	// Save project registry
-	if s.registry != nil {
-		if err := s.registry.Save(); err != nil {
-			logging.Warn("failed to save project registry", "error", err)
-		}
-	}
-
-	// Save task store
-	if s.taskStore != nil {
-		if err := s.taskStore.Save(); err != nil {
-			logging.Warn("failed to save task store", "error", err)
-		}
-	}
-
-	// Save task run store
-	if s.taskRunStore != nil {
-		if err := s.taskRunStore.Save(); err != nil {
-			logging.Warn("failed to save task run store", "error", err)
-		}
-	}
+// Detector exposes the tool detector so main can pre-warm its cache.
+func (s *Server) Detector() *tools.Detector {
+	return s.detector
 }
 
 // isValidTool checks if a tool name is in the configured whitelist.
@@ -399,6 +243,7 @@ func (s *systemService) GetInfo(ctx context.Context, _ *pb.Empty) (*pb.SystemInf
 		Arch:           runtime.GOARCH,
 		DaemonVersion:  config.DaemonVersion,
 		InstalledTools: installedTools,
+		Commit:         config.Commit,
 	}, nil
 }
 
@@ -409,6 +254,7 @@ func (s *systemService) GetStatus(ctx context.Context, _ *pb.Empty) (*pb.SystemS
 		UptimeSeconds:  uptimeSeconds,
 		ActiveSessions: int32(s.server.sessionManager.Count()),
 		ActiveProjects: int32(s.server.registry.Count()),
+		Pid:            int32(os.Getpid()),
 	}, nil
 }
 
@@ -736,9 +582,41 @@ func (s *sessionService) Attach(req *pb.AttachRequest, stream pb.SessionService_
 	}
 }
 
+// Input receives keystrokes for a session. Recv runs in its own goroutine so
+// the handler can also return when the daemon shuts down: a client that
+// keeps its input stream open (the mobile app does) would otherwise hold
+// GracefulStop until the service manager's kill deadline.
 func (s *sessionService) Input(stream pb.SessionService_InputServer) error {
+	type recvResult struct {
+		req *pb.TerminalInput
+		err error
+	}
+	recvCh := make(chan recvResult, 1)
+	ctx := stream.Context()
+	go func() {
+		for {
+			req, err := stream.Recv()
+			select {
+			case recvCh <- recvResult{req: req, err: err}:
+			case <-ctx.Done():
+				return
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
 	for {
-		req, err := stream.Recv()
+		var r recvResult
+		select {
+		case <-s.server.Stopping():
+			return status.Error(codes.Unavailable, "daemon shutting down")
+		case <-ctx.Done():
+			return status.FromContextError(ctx.Err()).Err()
+		case r = <-recvCh:
+		}
+		req, err := r.req, r.err
 		if err == io.EOF {
 			return stream.SendAndClose(&pb.Empty{})
 		}

@@ -127,6 +127,15 @@ func parseStatData(data string) (ppid int, starttime uint64, err error) {
 }
 
 // bootTime returns the system boot time from /proc/stat, or zero if unknown.
+// LsofPath is unused on Linux (cwd comes from /proc).
+func LsofPath() string { return "" }
+
+// BootTime returns when the machine booted (the btime line of /proc/stat).
+func BootTime() (time.Time, bool) {
+	bt := bootTime()
+	return bt, !bt.IsZero()
+}
+
 func bootTime() time.Time {
 	data, err := os.ReadFile("/proc/stat")
 	if err != nil {

@@ -20,18 +20,72 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/gelotto/hqsshd/internal/logging"
 )
 
 // lsofTimeout bounds the batched cwd lookup so a wedged lsof can't hang the
 // ListExternalSessions RPC.
 const lsofTimeout = 5 * time.Second
+
+// lsofPath resolves lsof once: PATH first, then its stock macOS location
+// (/usr/sbin is on launchd's default PATH, but not necessarily on a
+// custom one). Empty when it cannot be found.
+var lsofPath = sync.OnceValue(func() string {
+	if p, err := exec.LookPath("lsof"); err == nil {
+		return p
+	}
+	if _, err := os.Stat("/usr/sbin/lsof"); err == nil {
+		return "/usr/sbin/lsof"
+	}
+	return ""
+})
+
+// LsofPath returns the lsof binary the daemon uses for working-directory
+// lookups ("" when none is found). Exported so `hqssh doctor` reports the
+// same resolution the daemon applies.
+func LsofPath() string { return lsofPath() }
+
+// BootTime returns when the machine booted (kern.boottime).
+func BootTime() (time.Time, bool) {
+	tv, err := unix.SysctlTimeval("kern.boottime")
+	if err != nil || tv.Sec == 0 {
+		return time.Time{}, false
+	}
+	return time.Unix(tv.Sec, int64(tv.Usec)*1000), true
+}
+
+// lsofWarn rate-limits the "lsof is broken" warnings: cwd lookups run on
+// every ListExternalSessions call, and a missing lsof should be logged,
+// not silently turned into "no external sessions".
+var lsofWarn = &rateLimiter{every: 5 * time.Minute}
+
+type rateLimiter struct {
+	mu    sync.Mutex
+	every time.Duration
+	last  time.Time
+}
+
+// Do runs fn unless it ran less than `every` ago.
+func (r *rateLimiter) Do(fn func()) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.last.IsZero() && time.Since(r.last) < r.every {
+		return
+	}
+	r.last = time.Now()
+	fn()
+}
 
 // listProcesses enumerates the kernel process table via sysctl. argv comes
 // from KERN_PROCARGS2, which the kernel only serves for the caller's own
@@ -132,16 +186,39 @@ func cwdFor(pids []int) map[int]string {
 		parts[i] = strconv.Itoa(pid)
 	}
 
+	lsof := lsofPath()
+	if lsof == "" {
+		lsofWarn.Do(func() {
+			logging.Warn("lsof not found; external session working directories are unavailable",
+				"expected", "/usr/sbin/lsof")
+		})
+		return nil
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), lsofTimeout)
 	defer cancel()
 
 	// -a: AND the selectors; -d cwd: only the cwd descriptor; -Fn: machine-
 	// readable output (p<pid> / n<path> lines); -w: suppress warnings.
-	out, err := exec.CommandContext(ctx, "lsof", "-a", "-d", "cwd", "-Fn",
+	out, err := exec.CommandContext(ctx, lsof, "-a", "-d", "cwd", "-Fn",
 		"-w", "-p", strings.Join(parts, ",")).Output()
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		lsofWarn.Do(func() {
+			logging.Warn("lsof timed out; external sessions omitted",
+				"pids", len(pids), "timeout", lsofTimeout)
+		})
+		return nil
+	}
 	// lsof exits non-zero when any requested pid yields no output; parse
 	// whatever it did print rather than failing the whole scan.
 	if len(out) == 0 && err != nil {
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) {
+			// Not "no matches" but a failure to run at all
+			lsofWarn.Do(func() {
+				logging.Warn("lsof failed; external sessions omitted", "error", err)
+			})
+		}
 		return nil
 	}
 	return parseLsofCwd(out)

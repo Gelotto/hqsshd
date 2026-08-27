@@ -20,6 +20,8 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+
+	"github.com/gelotto/hqsshd/internal/fsutil"
 )
 
 const stateFile = "discovery.json"
@@ -54,6 +56,7 @@ func (s *DiscoveryState) Load() error {
 	defer s.mu.Unlock()
 
 	path := filepath.Join(s.dataDir, stateFile)
+	fsutil.RemoveStaleTemps(path)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -99,13 +102,8 @@ func (s *DiscoveryState) Save() error {
 		return err
 	}
 
-	// Atomic write: write to temp file then rename to avoid corruption on crash
-	path := filepath.Join(s.dataDir, stateFile)
-	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
-		return err
-	}
-	return os.Rename(tmpPath, path)
+	// Atomic write (temp file + rename); temp is cleaned up on failure
+	return fsutil.WriteFileAtomic(filepath.Join(s.dataDir, stateFile), data, 0600)
 }
 
 // AddScanRoots records directories as persistent scan roots. Paths are

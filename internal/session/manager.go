@@ -517,15 +517,23 @@ func (m *Manager) Close() error {
 	close(m.done)
 	m.wg.Wait() // Wait for cleanupLoop to exit before acquiring lock
 
-	// Close all sessions
+	// Close all sessions concurrently: each Close waits up to 2s for its
+	// PTY reader, and the service manager's kill deadline (launchd
+	// ExitTimeOut) is per daemon, not per session.
 	m.sessionsMu.Lock()
 
 	sessionCount := len(m.sessions)
 	sessionIDs := make([]string, 0, sessionCount)
+	var closeWg sync.WaitGroup
 	for id, sess := range m.sessions {
-		sess.Close()
 		sessionIDs = append(sessionIDs, id)
+		closeWg.Add(1)
+		go func(sess *Session) {
+			defer closeWg.Done()
+			sess.Close()
+		}(sess)
 	}
+	closeWg.Wait()
 
 	m.sessionsMu.Unlock()
 

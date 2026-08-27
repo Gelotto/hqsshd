@@ -16,9 +16,11 @@
 package logging
 
 import (
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -50,11 +52,17 @@ func Init(cfg *Config) error {
 
 	var output io.Writer = os.Stdout
 
-	// If file is specified, open it for logging
+	// If file is specified, open it for logging. The parent directory is
+	// created on demand: a log.file pointing at a not-yet-existing directory
+	// used to make the daemon exit before writing a single line, which under
+	// launchd/systemd KeepAlive became a silent restart loop.
 	if cfg.File != "" {
+		if err := os.MkdirAll(filepath.Dir(cfg.File), 0700); err != nil {
+			return fmt.Errorf("create log directory for %s: %w", cfg.File, err)
+		}
 		f, err := os.OpenFile(cfg.File, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 		if err != nil {
-			return err
+			return fmt.Errorf("open log file %s: %w", cfg.File, err)
 		}
 		logFile = f
 		output = f
@@ -79,6 +87,13 @@ func Init(cfg *Config) error {
 }
 
 // Close closes the log file if one was opened.
+// ToFile reports whether the logger writes to a file (as opposed to
+// stdout/stderr captured by a service manager). Fatal startup errors are
+// mirrored to stderr in that case so they are visible on the terminal too.
+func ToFile() bool {
+	return logFile != nil
+}
+
 func Close() {
 	if logFile != nil {
 		logFile.Close()

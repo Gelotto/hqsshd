@@ -20,6 +20,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/gelotto/hqsshd/internal/fsutil"
 )
 
 const registryFile = "projects.json"
@@ -45,6 +47,7 @@ func (r *Registry) Load() error {
 	defer r.mu.Unlock()
 
 	path := filepath.Join(r.dataDir, registryFile)
+	fsutil.RemoveStaleTemps(path)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -86,13 +89,8 @@ func (r *Registry) Save() error {
 		return err
 	}
 
-	// Atomic write: write to temp file then rename to avoid corruption on crash
-	path := filepath.Join(r.dataDir, registryFile)
-	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
-		return err
-	}
-	return os.Rename(tmpPath, path)
+	// Atomic write (temp file + rename); temp is cleaned up on failure
+	return fsutil.WriteFileAtomic(filepath.Join(r.dataDir, registryFile), data, 0600)
 }
 
 // Add adds a project to the registry

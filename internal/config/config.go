@@ -21,6 +21,8 @@ import (
 	"regexp"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/gelotto/hqsshd/internal/fsutil"
 )
 
 // validToolName matches safe tool names: alphanumeric, hyphens, underscores only.
@@ -173,14 +175,36 @@ func DefaultConfig() *Config {
 	}
 }
 
+// DataDirFor returns the daemon data directory under a home directory.
+func DataDirFor(homeDir string) string {
+	return filepath.Join(homeDir, DefaultConfigDir)
+}
+
+// DataDir returns the daemon data directory (~/.hqssh): config, stores,
+// pidfile and logs all live here.
+func DataDir() (string, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return DataDirFor(homeDir), nil
+}
+
+// DefaultConfigPath returns ~/.hqssh/daemon.yaml.
+func DefaultConfigPath() (string, error) {
+	dir, err := DataDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, DefaultConfigFile), nil
+}
+
 // Load loads configuration from the default location or returns default config
 func Load() (*Config, error) {
-	homeDir, err := os.UserHomeDir()
+	configPath, err := DefaultConfigPath()
 	if err != nil {
 		return DefaultConfig(), nil
 	}
-
-	configPath := filepath.Join(homeDir, DefaultConfigDir, DefaultConfigFile)
 	return LoadFromPath(configPath)
 }
 
@@ -226,7 +250,9 @@ func (c *Config) SaveToPath(path string) error {
 		return err
 	}
 
-	return os.WriteFile(path, data, 0600)
+	// Atomic: a crash mid-write must not leave a truncated daemon.yaml that
+	// the daemon then rejects with exit 2 on every restart.
+	return fsutil.WriteFileAtomic(path, data, 0600)
 }
 
 // Validate checks the configuration for security issues and invalid values.

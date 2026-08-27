@@ -16,6 +16,8 @@
 
 package procscan
 
+import "time"
+
 import "fmt"
 
 // External session discovery is only implemented for Linux (/proc) and
@@ -28,3 +30,9 @@ func readArgv(pid int) ([]string, error) {
 }
 
 func cwdFor(pids []int) map[int]string { return nil }
+
+// LsofPath is unavailable on this platform.
+func LsofPath() string { return "" }
+
+// BootTime is unavailable on this platform.
+func BootTime() (time.Time, bool) { return time.Time{}, false }
