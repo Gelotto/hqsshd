@@ -33,3 +33,138 @@ jobs:
 
       - name: Vet
         run: go vet ./...
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+
+      - name: shellcheck install.sh
+        run: shellcheck -s sh -S style scripts/install.sh
+
+      - name: systemd unit and installer heredoc must match (except ExecStart)
+        run: |
+          awk '/<<UNIT$/{f=1;next}/^UNIT$/{f=0}f' scripts/install.sh | grep -v '^ExecStart=' | sed 's/\\\$HOME/$HOME/' > /tmp/heredoc.unit
+          grep -v '^ExecStart=' hqsshd.service > /tmp/checked-in.unit
+          diff -u /tmp/checked-in.unit /tmp/heredoc.unit
+
+  # End-to-end: install from a locally built archive, verify with
+  # `hqssh doctor`, restart, upgrade in place, uninstall. On macOS this
+  # exercises launchd for real; on Linux it uses systemd --user when the
+  # runner provides a user manager and degrades to a hand-started daemon
+  # otherwise.
+  install-e2e:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      HQSSH_INSTALL_DIR: ${{ github.workspace }}/../hqssh-bin
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build a release-style archive
+        run: |
+          GOOS=$(go env GOOS); GOARCH=$(go env GOARCH)
+          LDFLAGS="-X github.com/gelotto/hqsshd/internal/config.DaemonVersion=v0.0.0-ci -X github.com/gelotto/hqsshd/internal/config.Commit=$(git rev-parse --short HEAD)"
+          mkdir -p dist
+          go build -trimpath -ldflags "$LDFLAGS" -o dist/hqsshd ./cmd/hqsshd
+          go build -trimpath -ldflags "$LDFLAGS" -o dist/hqssh ./cmd/hqssh
+          COPYFILE_DISABLE=1 tar -czf "$RUNNER_TEMP/hqsshd-$GOOS-$GOARCH.tar.gz" -C dist hqsshd hqssh
+          echo "HQSSH_LOCAL_ARCHIVE=$RUNNER_TEMP/hqsshd-$GOOS-$GOARCH.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Pick launchd scope (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          if launchctl print "gui/$(id -u)" >/dev/null 2>&1; then
+            echo "GUI domain present; installing a user agent"
+            echo "HQSSH_SERVICE_SCOPE=user" >> "$GITHUB_ENV"
+          else
+            echo "No GUI domain on this runner; installing a system daemon (passwordless sudo)"
+            echo "HQSSH_SERVICE_SCOPE=system" >> "$GITHUB_ENV"
+          fi
+
+      - name: Bring up a systemd user manager (Linux, best effort)
+        if: runner.os == 'Linux'
+        run: |
+          sudo loginctl enable-linger "$(id -un)" || true
+          sudo systemctl start "user@$(id -u).service" || true
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+          echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
+          echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> "$GITHUB_ENV"
+          if systemctl --user list-units >/dev/null 2>&1; then
+            echo "systemd --user is available"
+          else
+            echo "::warning::no systemd --user on this runner; the service path is skipped"
+            echo "HQSSH_NO_SERVICE=1" >> "$GITHUB_ENV"
+          fi
+
+      - name: Install
+        run: sh scripts/install.sh
+
+      - name: Start the daemon by hand (no-service fallback only)
+        if: env.HQSSH_NO_SERVICE == '1'
+        run: |
+          ("$HQSSH_INSTALL_DIR/hqsshd" > "$RUNNER_TEMP/hqsshd.out" 2>&1 &)
+          sleep 2
+
+      - name: doctor
+        run: "$HQSSH_INSTALL_DIR/hqssh" doctor
+
+      - name: Restart via the CLI, then doctor again
+        if: env.HQSSH_NO_SERVICE != '1'
+        run: |
+          "$HQSSH_INSTALL_DIR/hqssh" service restart
+          "$HQSSH_INSTALL_DIR/hqssh" service status
+          "$HQSSH_INSTALL_DIR/hqssh" doctor
+
+      - name: Upgrade in place (re-run the installer; pid must change)
+        if: env.HQSSH_NO_SERVICE != '1'
+        run: |
+          PID1=$(cat ~/.hqssh/hqsshd.pid)
+          sh scripts/install.sh
+          PID2=$(cat ~/.hqssh/hqsshd.pid)
+          echo "pid before=$PID1 after=$PID2"
+          test -n "$PID1" && test "$PID1" != "$PID2"
+          "$HQSSH_INSTALL_DIR/hqssh" doctor
+
+      - name: A second daemon refuses to start
+        run: |
+          set +e
+          "$HQSSH_INSTALL_DIR/hqsshd" > "$RUNNER_TEMP/second.out" 2>&1
+          code=$?
+          set -e
+          cat "$RUNNER_TEMP/second.out"
+          test "$code" = 3
+          grep -q "already running" "$RUNNER_TEMP/second.out"
+
+      - name: Uninstall and assert clean
+        run: |
+          pkill -x hqsshd || true   # only matters in the no-service fallback
+          sh scripts/install.sh --uninstall --purge-logs
+          ! pgrep -x hqsshd
+          test ! -e ~/Library/LaunchAgents/com.gelotto.hqsshd.plist
+          test ! -e /Library/LaunchDaemons/com.gelotto.hqsshd.plist
+          test ! -e ~/.config/systemd/user/hqsshd.service
+          test ! -S /tmp/hqssh.sock
+          test ! -x "$HQSSH_INSTALL_DIR/hqsshd"
+
+      - name: Dump logs on failure
+        if: failure()
+        run: |
+          echo "--- ~/.hqssh/logs/hqsshd.log"; tail -n 100 ~/.hqssh/logs/hqsshd.log 2>/dev/null || true
+          echo "--- journalctl"; journalctl --user -u hqsshd -n 100 --no-pager 2>/dev/null || true
+          echo "--- launchctl print"; launchctl print "gui/$(id -u)/com.gelotto.hqsshd" 2>/dev/null || launchctl print system/com.gelotto.hqsshd 2>/dev/null || true
+          echo "--- hand-started daemon"; cat "$RUNNER_TEMP/hqsshd.out" 2>/dev/null || true

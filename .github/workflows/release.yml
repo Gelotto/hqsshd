@@ -10,18 +10,26 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # darwin builds run on a macOS runner so the binaries can be ad-hoc
+    # codesigned with stable identifiers (launchd, TCC and Console then
+    # show "com.gelotto.hqsshd" instead of the linker's "a.out"). Still not
+    # Developer ID signed or notarized.
+    runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
         include:
           - goos: linux
             goarch: amd64
+            runner: ubuntu-latest
           - goos: linux
             goarch: arm64
+            runner: ubuntu-latest
           - goos: darwin
             goarch: amd64
+            runner: macos-latest
           - goos: darwin
             goarch: arm64
+            runner: macos-latest
 
     steps:
       - uses: actions/checkout@v4
@@ -49,11 +57,23 @@ jobs:
           go build -trimpath -ldflags "${LDFLAGS}" -o dist/hqsshd ./cmd/hqsshd
           go build -trimpath -ldflags "${LDFLAGS}" -o dist/hqssh ./cmd/hqssh
 
+      - name: Codesign (darwin)
+        if: matrix.goos == 'darwin'
+        run: |
+          codesign --force --sign - --identifier com.gelotto.hqsshd dist/hqsshd
+          codesign --force --sign - --identifier com.gelotto.hqssh dist/hqssh
+          codesign -dv dist/hqsshd 2>&1 | grep -q 'Identifier=com.gelotto.hqsshd'
+
       - name: Package
         run: |
           ARCHIVE="hqsshd-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz"
-          tar -czf "${ARCHIVE}" -C dist hqsshd hqssh
-          sha256sum "${ARCHIVE}" > "${ARCHIVE}.sha256"
+          # COPYFILE_DISABLE keeps macOS tar from adding ._* AppleDouble entries
+          COPYFILE_DISABLE=1 tar -czf "${ARCHIVE}" -C dist hqsshd hqssh
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "${ARCHIVE}" > "${ARCHIVE}.sha256"
+          else
+            shasum -a 256 "${ARCHIVE}" > "${ARCHIVE}.sha256"
+          fi
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
