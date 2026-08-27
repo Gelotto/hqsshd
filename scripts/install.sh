@@ -79,25 +79,52 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Portable HTTP fetch — prefers curl, falls back to wget.
+# Portable HTTP fetch — prefers curl, falls back to wget. GITHUB_TOKEN, when
+# set, is sent to api.github.com so the version lookup is not rate-limited.
 fetch() {
     _url="$1"
     _dest="${2:-}"
+    _auth=""
+    case "$_url" in
+        https://api.github.com/*) [ -n "${GITHUB_TOKEN:-}" ] && _auth="Authorization: Bearer $GITHUB_TOKEN" ;;
+    esac
     if command -v curl >/dev/null 2>&1; then
         if [ -n "$_dest" ]; then
-            curl -fsSL -o "$_dest" "$_url"
+            curl -fsSL ${_auth:+-H "$_auth"} -o "$_dest" "$_url"
         else
-            curl -fsSL "$_url"
+            curl -fsSL ${_auth:+-H "$_auth"} "$_url"
         fi
     elif command -v wget >/dev/null 2>&1; then
         if [ -n "$_dest" ]; then
-            wget -qO "$_dest" "$_url"
+            wget -q ${_auth:+--header="$_auth"} -O "$_dest" "$_url"
         else
-            wget -qO- "$_url"
+            wget -q ${_auth:+--header="$_auth"} -O- "$_url"
         fi
     else
         error "curl or wget is required"
     fi
+}
+
+# latest_release_tag prints the newest release tag. The GitHub API is tried
+# first (structured, but rate-limited to 60 unauthenticated calls an hour);
+# the releases/latest redirect is the fallback — it is not rate-limited and
+# its Location header ends in the tag.
+latest_release_tag() {
+    _api_url="https://api.github.com/repos/${HQSSH_REPO}/releases/latest"
+    _tag="$(fetch "$_api_url" "" 2>/dev/null | grep '"tag_name"' | head -1 | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')" || _tag=""
+    if [ -n "$_tag" ]; then
+        printf '%s' "$_tag"
+        return 0
+    fi
+    _page="https://github.com/${HQSSH_REPO}/releases/latest"
+    if command -v curl >/dev/null 2>&1; then
+        _loc="$(curl -sI "$_page" 2>/dev/null | tr -d '\r' | sed -n 's/^[Ll]ocation: //p' | tail -1)"
+    else
+        _loc="$(wget -q --max-redirect=0 -S -O /dev/null "$_page" 2>&1 | tr -d '\r' | sed -n 's/^[[:space:]]*[Ll]ocation: //p' | tail -1)"
+    fi
+    case "$_loc" in
+        */releases/tag/*) printf '%s' "${_loc##*/releases/tag/}" ;;
+    esac
 }
 
 # run_sudo prints the command before sudo runs it, so a password prompt is
@@ -197,16 +224,13 @@ resolve_version() {
     fi
 
     info "Resolving latest version..."
-    _api_url="https://api.github.com/repos/${HQSSH_REPO}/releases/latest"
-    _response="$(fetch "$_api_url" "" 2>/dev/null)" || {
-        warn "GitHub API request failed. You may be rate-limited."
-        warn "Set HQSSH_VERSION=vX.Y.Z or export GITHUB_TOKEN to authenticate."
+    VERSION="$(latest_release_tag)"
+    if [ -z "$VERSION" ]; then
+        warn "Could not reach GitHub to find the latest release (offline, or api.github.com rate-limited)."
+        warn "Pin a version instead:  curl -fsSL https://hqssh.com/install | HQSSH_VERSION=vX.Y.Z sh"
+        warn "or export GITHUB_TOKEN to lift the API rate limit."
         error "Could not determine latest version"
-    }
-
-    # Extract tag_name from JSON without jq
-    VERSION="$(printf '%s' "$_response" | grep '"tag_name"' | head -1 | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
-    [ -n "$VERSION" ] || error "Could not parse latest version from GitHub API"
+    fi
     info "Latest version: $VERSION"
 }
 
