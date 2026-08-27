@@ -8,6 +8,8 @@ Type=simple
 ExecStart=%h/.local/bin/hqsshd
 Restart=on-failure
 RestartSec=5
+# The daemon's graceful stop is bounded at ~10s; give it room before SIGKILL.
+TimeoutStopSec=30
 Environment=HOME=%h
 
 # Logging goes to journald
