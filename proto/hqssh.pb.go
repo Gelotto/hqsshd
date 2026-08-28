@@ -1277,8 +1277,13 @@ func (x *AttachRequest) GetRows() int32 {
 }
 
 type TerminalOutput struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Data          []byte                 `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Data  []byte                 `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"`
+	// Output before this message was dropped for this client (slow link kept
+	// its queue full past the daemon's bounded wait). data is empty. The
+	// client should resync its escape parser; the daemon asks the process to
+	// repaint once the client's backlog has drained.
+	OutputGap     bool `protobuf:"varint,2,opt,name=output_gap,json=outputGap,proto3" json:"output_gap,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1318,6 +1323,13 @@ func (x *TerminalOutput) GetData() []byte {
 		return x.Data
 	}
 	return nil
+}
+
+func (x *TerminalOutput) GetOutputGap() bool {
+	if x != nil {
+		return x.OutputGap
+	}
+	return false
 }
 
 type TerminalInput struct {
@@ -3191,9 +3203,11 @@ const file_proto_hqssh_proto_rawDesc = "" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x12\n" +
 	"\x04cols\x18\x02 \x01(\x05R\x04cols\x12\x12\n" +
-	"\x04rows\x18\x03 \x01(\x05R\x04rows\"$\n" +
+	"\x04rows\x18\x03 \x01(\x05R\x04rows\"C\n" +
 	"\x0eTerminalOutput\x12\x12\n" +
-	"\x04data\x18\x01 \x01(\fR\x04data\"B\n" +
+	"\x04data\x18\x01 \x01(\fR\x04data\x12\x1d\n" +
+	"\n" +
+	"output_gap\x18\x02 \x01(\bR\toutputGap\"B\n" +
 	"\rTerminalInput\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x12\n" +

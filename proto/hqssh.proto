@@ -215,6 +215,11 @@ message AttachRequest {
 
 message TerminalOutput {
   bytes data = 1;
+  // Output before this message was dropped for this client (slow link kept
+  // its queue full past the daemon's bounded wait). data is empty. The
+  // client should resync its escape parser; the daemon asks the process to
+  // repaint once the client's backlog has drained.
+  bool output_gap = 2;
 }
 
 message TerminalInput {

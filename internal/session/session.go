@@ -20,6 +20,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gelotto/hqsshd/internal/logging"
@@ -51,10 +52,24 @@ func (s Status) String() string {
 
 // clientState tracks a connected client's output channel and drop statistics
 type clientState struct {
-	ch            chan []byte
-	dropCount     int64
-	lastDropTime  time.Time
+	ch           chan []byte
+	gapPending   atomic.Bool // output was dropped; a gap marker is owed to this client
+	dropCount    int64       // written by the PTY reader only; read under clientsMu
+	lastDropTime time.Time
 }
+
+// clientSendTimeout bounds how long the PTY reader waits on one slow client
+// before dropping a chunk. Waiting is real flow control — the child's PTY
+// writes stall once the kernel buffer fills, exactly as with a physical
+// terminal — while the bound keeps one dead client from freezing the others.
+// broadcast runs under outputBufferMu and clientsMu.RLock, so keep this well
+// under Close()'s 2 s reader wait.
+const clientSendTimeout = 200 * time.Millisecond
+
+// gapMarker is an empty (non-nil) chunk delivered in-band where output was
+// lost for a client. The PTY reader never broadcasts zero-length chunks, so a
+// zero-length receive is unambiguous for consumers (see server.Attach).
+var gapMarker = []byte{}
 
 // Session represents a persistent PTY session running an AI tool
 type Session struct {
@@ -294,7 +309,7 @@ func (s *Session) AttachClient(clientID string, bufferSize int) ([]byte, <-chan 
 // appendAndBroadcast).
 func (s *Session) registerClient(clientID string, bufferSize int) (<-chan []byte, int) {
 	if bufferSize <= 0 {
-		bufferSize = 256
+		bufferSize = 1024
 	}
 	cs := &clientState{
 		ch: make(chan []byte, bufferSize),
@@ -440,27 +455,63 @@ func (s *Session) broadcast(data []byte) {
 	defer s.clientsMu.RUnlock()
 
 	for clientID, cs := range s.clients {
-		// Non-blocking send - drop if channel is full.
-		// Recover from panic in case channel was closed between
-		// the IsDone() check above and this send (narrow race with Close()).
+		// Recover from panic in case the channel was closed between the
+		// IsDone() check above and this send (narrow race with Close()).
 		func() {
 			defer func() { recover() }()
+
+			// A marker is owed from an earlier drop: place it exactly where
+			// the gap is, before the next chunk that fits. If it does not fit
+			// either, the flag stays set and the consumer picks it up after
+			// draining (TakeOutputGap).
+			if cs.gapPending.Load() {
+				select {
+				case cs.ch <- gapMarker:
+					cs.gapPending.Store(false)
+				default:
+				}
+			}
+
+			// Fast path: room in the queue.
 			select {
 			case cs.ch <- data:
+				return
 			default:
-				cs.dropCount++
-				cs.lastDropTime = time.Now()
-				// Log warning at powers of 100 (100, 1000, 10000, ...)
-				if cs.dropCount == 100 || (cs.dropCount > 0 && cs.dropCount%1000 == 0) {
-					logging.Warn("client output drops",
-						"session_id", s.ID,
-						"client_id", clientID,
-						"total_drops", cs.dropCount,
-					)
-				}
+			}
+
+			// Queue full: wait a bounded time for the consumer (a slow link is
+			// the normal reason) before giving up on this chunk.
+			timer := time.NewTimer(clientSendTimeout)
+			defer timer.Stop()
+			select {
+			case cs.ch <- data:
+				return
+			case <-timer.C:
+			}
+
+			cs.dropCount++
+			cs.lastDropTime = time.Now()
+			cs.gapPending.Store(true)
+			if cs.dropCount == 1 || cs.dropCount == 100 || cs.dropCount%1000 == 0 {
+				logging.Warn("client output gap",
+					"session_id", s.ID,
+					"client_id", clientID,
+					"total_drops", cs.dropCount,
+					"waited", clientSendTimeout.String(),
+				)
 			}
 		}()
 	}
+}
+
+// TakeOutputGap reports and clears whether output was dropped for clientID
+// without a gap marker having been queued yet. Consumers call it once their
+// channel is drained so a drop at the tail of a burst is still surfaced.
+func (s *Session) TakeOutputGap(clientID string) bool {
+	s.clientsMu.RLock()
+	cs, ok := s.clients[clientID]
+	s.clientsMu.RUnlock()
+	return ok && cs.gapPending.CompareAndSwap(true, false)
 }
 
 // SessionInfo is a serializable snapshot of session state (for persistence/API)

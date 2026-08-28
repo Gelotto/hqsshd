@@ -69,7 +69,9 @@ func NewManager(idleTimeoutSec, maxSessions, historySize int, dataDir, logDir st
 	}
 
 	if clientBufferSize <= 0 {
-		clientBufferSize = 256
+		// 1024 chunks (≤ 4 KB each) absorbs a several-second cellular hiccup
+		// before the bounded wait in Session.broadcast is even reached.
+		clientBufferSize = 1024
 	}
 
 	// Default log directory

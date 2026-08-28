@@ -262,7 +262,9 @@ func (s *Session) Resize(cols, rows int) error {
 // the attach-time resize only triggers a kernel SIGWINCH when dimensions
 // actually change, so a client re-attaching at the same size would only see
 // the raw scrollback replay — diff-rendering TUIs (e.g. Codex) never
-// re-emit a full frame without a nudge. Shells ignore SIGWINCH.
+// re-emit a full frame without a nudge. Also used by server.Attach after an
+// output gap. Shells survive it: readline/zle redraw the current prompt line,
+// which is harmless.
 func (s *Session) SignalRepaint() {
 	if s.cmd == nil || s.IsDone() {
 		return

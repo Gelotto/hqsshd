@@ -468,7 +468,7 @@ func TestInputStreamReturnsOnStop(t *testing.T) {
 	if err := stream.Send(&pb.TerminalInput{SessionId: "nope", Data: []byte("x")}); err != nil {
 		t.Fatal(err)
 	}
-	// The unknown session makes the handler return Internal; that is fine
+	// The unknown session makes the handler return NotFound; that is fine
 	// for this test only if it happens after Stop. Give the send a moment
 	// to arrive, then stop and time the shutdown.
 	time.Sleep(100 * time.Millisecond)
@@ -484,7 +484,7 @@ func TestInputStreamReturnsOnStop(t *testing.T) {
 	if err == nil {
 		t.Fatal("stream ended without error")
 	}
-	if c := status.Code(err); c != codes.Unavailable && c != codes.Internal && c != codes.Canceled {
+	if c := status.Code(err); c != codes.Unavailable && c != codes.Internal && c != codes.NotFound && c != codes.Canceled {
 		t.Errorf("stream error code = %v (%v)", c, err)
 	}
 }

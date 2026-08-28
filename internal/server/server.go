@@ -560,6 +560,36 @@ func (s *sessionService) Attach(req *pb.AttachRequest, stream pb.SessionService_
 		return status.Error(codes.NotFound, "session not found")
 	}
 
+	// Output lost for this client (slow link) is surfaced in-band as an
+	// output_gap message positioned exactly at the gap, and the process is
+	// asked to repaint once the client's backlog has drained — so the redraw
+	// itself is not dropped. Repaints are rate limited: a link that keeps
+	// falling behind must not be flooded with full frames.
+	const repaintMinInterval = 500 * time.Millisecond
+	var lastRepaint time.Time
+	repaintPending := false
+	sendGap := func() error {
+		if err := stream.Send(&pb.TerminalOutput{OutputGap: true}); err != nil {
+			return status.Errorf(codes.Internal, "failed to send gap marker: %v", err)
+		}
+		repaintPending = true
+		return nil
+	}
+	repaintIfDrained := func() {
+		if !repaintPending || len(outputCh) != 0 {
+			return
+		}
+		// Stay pending while throttled so the repaint is retried on the next
+		// drain rather than dropped — otherwise two gaps inside the interval
+		// followed by quiescence leave a diff-rendering TUI stale.
+		if time.Since(lastRepaint) < repaintMinInterval {
+			return
+		}
+		repaintPending = false
+		lastRepaint = time.Now()
+		sess.SignalRepaint()
+	}
+
 	for {
 		select {
 		case data, ok := <-outputCh:
@@ -567,9 +597,26 @@ func (s *sessionService) Attach(req *pb.AttachRequest, stream pb.SessionService_
 				// Channel closed - session ended
 				return nil
 			}
+			if len(data) == 0 {
+				// In-band gap marker (session.gapMarker): output before this
+				// point was dropped for us.
+				if err := sendGap(); err != nil {
+					return err
+				}
+				repaintIfDrained()
+				continue
+			}
 			if err := stream.Send(&pb.TerminalOutput{Data: data}); err != nil {
 				return status.Errorf(codes.Internal, "failed to send output: %v", err)
 			}
+			// A drop at the tail of a burst has no later chunk to carry its
+			// marker; surface it now that the queue is empty.
+			if len(outputCh) == 0 && sess.TakeOutputGap(clientID) {
+				if err := sendGap(); err != nil {
+					return err
+				}
+			}
+			repaintIfDrained()
 
 		case <-sess.Done():
 			// Session ended
@@ -635,6 +682,15 @@ func (s *sessionService) Input(stream pb.SessionService_InputServer) error {
 		}
 
 		if err := s.server.sessionManager.Input(sessionID, data); err != nil {
+			// Mirror Attach so the app can tell "the session is gone" (no
+			// point reopening the stream) from a transient failure.
+			msg := err.Error()
+			switch {
+			case strings.Contains(msg, "has ended"):
+				return status.Error(codes.FailedPrecondition, "session has ended")
+			case strings.Contains(msg, "not found"):
+				return status.Errorf(codes.NotFound, "failed to send input: %v", err)
+			}
 			return status.Errorf(codes.Internal, "failed to send input: %v", err)
 		}
 	}
