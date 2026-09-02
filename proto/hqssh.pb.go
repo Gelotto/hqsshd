@@ -290,9 +290,9 @@ type SystemInfo struct {
 	Os             string                 `protobuf:"bytes,2,opt,name=os,proto3" json:"os,omitempty"`
 	Arch           string                 `protobuf:"bytes,3,opt,name=arch,proto3" json:"arch,omitempty"`
 	DaemonVersion  string                 `protobuf:"bytes,4,opt,name=daemon_version,json=daemonVersion,proto3" json:"daemon_version,omitempty"`
-	InstalledTools []string               `protobuf:"bytes,5,rep,name=installed_tools,json=installedTools,proto3" json:"installed_tools,omitempty"` // ['claude', 'codex', 'aider']
-	Commit         string                 `protobuf:"bytes,6,opt,name=commit,proto3" json:"commit,omitempty"`                                       // Git commit the daemon was built from
-	ShellEnabled   bool                   `protobuf:"varint,7,opt,name=shell_enabled,json=shellEnabled,proto3" json:"shell_enabled,omitempty"`      // enable_shell_tool is set: 'shell' is accepted for sessions/tasks
+	InstalledTools []string               `protobuf:"bytes,5,rep,name=installed_tools,json=installedTools,proto3" json:"installed_tools,omitempty"`  // ['claude', 'codex', 'aider']
+	Commit         string                 `protobuf:"bytes,6,opt,name=commit,proto3" json:"commit,omitempty"`                                        // Git commit the daemon was built from
+	ShellEnabled   *bool                  `protobuf:"varint,7,opt,name=shell_enabled,json=shellEnabled,proto3,oneof" json:"shell_enabled,omitempty"` // enable_shell_tool is set: 'shell' is accepted for sessions/tasks (absent = pre-1.5 daemon, unknown)
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -370,8 +370,8 @@ func (x *SystemInfo) GetCommit() string {
 }
 
 func (x *SystemInfo) GetShellEnabled() bool {
-	if x != nil {
-		return x.ShellEnabled
+	if x != nil && x.ShellEnabled != nil {
+		return *x.ShellEnabled
 	}
 	return false
 }
@@ -3133,7 +3133,7 @@ var File_proto_hqssh_proto protoreflect.FileDescriptor
 const file_proto_hqssh_proto_rawDesc = "" +
 	"\n" +
 	"\x11proto/hqssh.proto\x12\x05hqssh\"\a\n" +
-	"\x05Empty\"\xd9\x01\n" +
+	"\x05Empty\"\xf0\x01\n" +
 	"\n" +
 	"SystemInfo\x12\x1a\n" +
 	"\bhostname\x18\x01 \x01(\tR\bhostname\x12\x0e\n" +
@@ -3141,8 +3141,9 @@ const file_proto_hqssh_proto_rawDesc = "" +
 	"\x04arch\x18\x03 \x01(\tR\x04arch\x12%\n" +
 	"\x0edaemon_version\x18\x04 \x01(\tR\rdaemonVersion\x12'\n" +
 	"\x0finstalled_tools\x18\x05 \x03(\tR\x0einstalledTools\x12\x16\n" +
-	"\x06commit\x18\x06 \x01(\tR\x06commit\x12#\n" +
-	"\rshell_enabled\x18\a \x01(\bR\fshellEnabled\"\x99\x01\n" +
+	"\x06commit\x18\x06 \x01(\tR\x06commit\x12(\n" +
+	"\rshell_enabled\x18\a \x01(\bH\x00R\fshellEnabled\x88\x01\x01B\x10\n" +
+	"\x0e_shell_enabled\"\x99\x01\n" +
 	"\fSystemStatus\x12%\n" +
 	"\x0euptime_seconds\x18\x01 \x01(\x03R\ruptimeSeconds\x12'\n" +
 	"\x0factive_sessions\x18\x02 \x01(\x05R\x0eactiveSessions\x12'\n" +
@@ -3572,6 +3573,7 @@ func file_proto_hqssh_proto_init() {
 	if File_proto_hqssh_proto != nil {
 		return
 	}
+	file_proto_hqssh_proto_msgTypes[1].OneofWrappers = []any{}
 	file_proto_hqssh_proto_msgTypes[40].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{

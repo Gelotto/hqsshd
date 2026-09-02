@@ -432,7 +432,9 @@ func resolveTool(ctx context.Context, c *client.Client, tool string) (string, er
 		}
 		return info.GetInstalledTools()[0], nil
 	}
-	if tool == "shell" && !info.GetShellEnabled() {
+	// Only a daemon that reports the flag (1.5+) can be trusted to say
+	// "disabled"; an older daemon decides for itself.
+	if tool == "shell" && info.ShellEnabled != nil && !info.GetShellEnabled() {
 		return "", fmt.Errorf(`tool "shell" is disabled on the daemon: set enable_shell_tool: true in ~/.hqssh/daemon.yaml and restart it`)
 	}
 	return tool, nil

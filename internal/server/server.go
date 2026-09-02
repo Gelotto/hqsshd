@@ -41,6 +41,7 @@ import (
 	"github.com/gelotto/hqsshd/internal/task"
 	"github.com/gelotto/hqsshd/internal/tools"
 	pb "github.com/gelotto/hqsshd/proto"
+	"google.golang.org/protobuf/proto"
 )
 
 // Server holds the daemon state and starts the gRPC server
@@ -255,7 +256,7 @@ func (s *systemService) GetInfo(ctx context.Context, _ *pb.Empty) (*pb.SystemInf
 		DaemonVersion:  config.DaemonVersion,
 		InstalledTools: installedTools,
 		Commit:         config.Commit,
-		ShellEnabled:   s.server.config.EnableShellTool,
+		ShellEnabled:   proto.Bool(s.server.config.EnableShellTool),
 	}, nil
 }
 

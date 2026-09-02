@@ -40,7 +40,7 @@ message SystemInfo {
   string daemon_version = 4;
   repeated string installed_tools = 5;  // ['claude', 'codex', 'aider']
   string commit = 6;                    // Git commit the daemon was built from
-  bool shell_enabled = 7;               // enable_shell_tool is set: 'shell' is accepted for sessions/tasks
+  optional bool shell_enabled = 7;      // enable_shell_tool is set: 'shell' is accepted for sessions/tasks (absent = pre-1.5 daemon, unknown)
 }
 
 message SystemStatus {

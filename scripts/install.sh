@@ -38,7 +38,7 @@ SERVICE_FILE="$SERVICE_DIR/$SERVICE_NAME.service"
 LAUNCHD_LABEL="com.gelotto.hqsshd"
 LAUNCHD_PLIST="$HOME/Library/LaunchAgents/${LAUNCHD_LABEL}.plist"
 SYSTEM_PLIST="/Library/LaunchDaemons/${LAUNCHD_LABEL}.plist"
-SERVICE_SCOPE="${HQSSH_SERVICE_SCOPE:-user}"
+SERVICE_SCOPE="${HQSSH_SERVICE_SCOPE:-}"
 DATA_DIR="$HOME/.hqssh"
 LOG_DIR="$DATA_DIR/logs"
 LOG_FILE="$LOG_DIR/hqsshd.log"
@@ -513,6 +513,22 @@ running_version() {
         printf '%s' "$_v"
     else
         binary_version "$INSTALL_DIR/hqsshd"
+    fi
+}
+
+# resolve_service_scope settles SERVICE_SCOPE: an explicit
+# HQSSH_SERVICE_SCOPE/--system wins; otherwise a re-run keeps the scope that
+# is installed ("re-run to update" must not silently turn a boot-time system
+# daemon into a login-time user agent); a fresh install is a user agent.
+resolve_service_scope() {
+    if [ -n "$SERVICE_SCOPE" ]; then
+        return
+    fi
+    if [ -f "$SYSTEM_PLIST" ]; then
+        SERVICE_SCOPE=system
+        info "Existing system daemon found; keeping system scope (HQSSH_SERVICE_SCOPE=user switches back)"
+    else
+        SERVICE_SCOPE=user
     fi
 }
 
@@ -1283,6 +1299,7 @@ main() {
     fi
 
     info "hqsshd installer"
+    resolve_service_scope
     verify_prerequisites
     detect_platform
     resolve_version
