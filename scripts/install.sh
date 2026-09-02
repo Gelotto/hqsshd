@@ -42,12 +42,21 @@ SERVICE_SCOPE="${HQSSH_SERVICE_SCOPE:-user}"
 DATA_DIR="$HOME/.hqssh"
 LOG_DIR="$DATA_DIR/logs"
 LOG_FILE="$LOG_DIR/hqsshd.log"
+# The launchd *system* daemon logs outside $HOME: launchd opens the log as
+# root, and a root open() through a user-owned path is a symlink primitive.
+SYSTEM_LOG_DIR="/Library/Logs/hqsshd"
+SYSTEM_LOG_FILE="$SYSTEM_LOG_DIR/hqsshd.log"
 PIDFILE="$DATA_DIR/hqsshd.pid"
 SOCKET_PATH="/tmp/hqssh.sock"
 TCP_PORT=50051
 TMPDIR_BASE="${TMPDIR:-/tmp}"
 PURGE_LOGS=0
 LOCAL_ARCHIVE=0
+
+# Everything this script creates under $HOME (data dir, logs, temp files)
+# is private to the user. Files that must be world-readable -- the launchd
+# plists -- get an explicit chmod 644 where they are written.
+umask 077
 HAVE_DOCTOR=""
 LAUNCHCTL_ERR=""
 
@@ -495,7 +504,7 @@ wait_for_healthy() {
 # running_version reads the version the daemon logged when it started.
 running_version() {
     if [ "$OS" = darwin ]; then
-        _line="$(grep 'hqsshd starting' "$LOG_FILE" 2>/dev/null | tail -1)"
+        _line="$(grep 'hqsshd starting' "$(active_log_file)" 2>/dev/null | tail -1)"
     else
         _line="$(journalctl --user -u "$SERVICE_NAME" -n 50 --no-pager 2>/dev/null | grep 'hqsshd starting' | tail -1)"
     fi
@@ -507,17 +516,39 @@ running_version() {
     fi
 }
 
+# active_log_file prints the launchd log the installed (or requested) scope
+# uses: the system daemon logs under /Library/Logs, the user agent under
+# ~/.hqssh/logs.
+active_log_file() {
+    if [ "$SERVICE_SCOPE" = system ] || [ -f "$SYSTEM_PLIST" ]; then
+        printf '%s' "$SYSTEM_LOG_FILE"
+    else
+        printf '%s' "$LOG_FILE"
+    fi
+}
+
 # rotate_log keeps launchd's log file bounded. launchd holds it open with
 # O_APPEND and cannot be told to reopen, so the only safe moment is while
 # the daemon is stopped — i.e. here, during an upgrade.
 rotate_log() {
-    [ -f "$LOG_FILE" ] || return 0
-    _size="$(wc -c < "$LOG_FILE" | tr -d ' ')"
+    _log="$LOG_FILE"
+    _as=""
+    if [ -f "$SYSTEM_PLIST" ]; then
+        # The system daemon's log lives in a root-owned directory
+        _log="$SYSTEM_LOG_FILE"
+        _as=run_sudo
+    fi
+    [ -f "$_log" ] || return 0
+    _size="$(wc -c < "$_log" 2>/dev/null | tr -d ' ')"
     [ "${_size:-0}" -gt 5242880 ] || return 0
-    info "Rotating $LOG_FILE ($((_size / 1024)) KB)"
-    [ -f "$LOG_FILE.2" ] && mv -f "$LOG_FILE.2" "$LOG_FILE.3"
-    [ -f "$LOG_FILE.1" ] && mv -f "$LOG_FILE.1" "$LOG_FILE.2"
-    mv -f "$LOG_FILE" "$LOG_FILE.1"
+    [ -n "$_as" ] && ensure_sudo
+    info "Rotating $_log ($((_size / 1024)) KB)"
+    # shellcheck disable=SC2086 # $_as is empty or the run_sudo function name
+    [ -f "$_log.2" ] && $_as mv -f "$_log.2" "$_log.3"
+    # shellcheck disable=SC2086
+    [ -f "$_log.1" ] && $_as mv -f "$_log.1" "$_log.2"
+    # shellcheck disable=SC2086
+    $_as mv -f "$_log" "$_log.1"
     return 0
 }
 
@@ -706,6 +737,8 @@ UNIT
 # "system". The system variant adds UserName/GroupName so the daemon runs
 # as the installing user even though launchd starts it as root at boot.
 write_launchd_plist() {
+    _plist_log="$LOG_FILE"
+    [ "$1" = system ] && _plist_log="$SYSTEM_LOG_FILE"
     cat <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -753,9 +786,9 @@ PLIST
          panic lands next to the structured log. Rotated by the installer on
          upgrade (hqsshd.log.1..3). launchd does not create the directory. -->
     <key>StandardOutPath</key>
-    <string>${LOG_FILE}</string>
+    <string>${_plist_log}</string>
     <key>StandardErrorPath</key>
-    <string>${LOG_FILE}</string>
+    <string>${_plist_log}</string>
     <key>EnvironmentVariables</key>
     <dict>
         <key>HOME</key>
@@ -781,23 +814,46 @@ install_service_launchd() {
         return
     fi
 
-    # launchd needs the log file's directory to exist, and for system scope
-    # the file must be owned by the user (launchd recreates a missing one as
-    # root, which then blocks the next upgrade).
+    # The data and log directories are private to the user. Nothing here
+    # runs as root against a path under $HOME: a symlink planted there by
+    # any process running as this user (an AI agent, for instance) must
+    # never be followed with elevated privileges.
     mkdir -p "$LOG_DIR"
-    if ! touch "$LOG_FILE" 2>/dev/null; then
-        if [ "$SERVICE_SCOPE" = system ] || [ -f "$SYSTEM_PLIST" ]; then
-            warn "$LOG_FILE is not writable (root-owned after a launchd restart); fixing ownership"
-            ensure_sudo
-            run_sudo chown "$(id -un)" "$LOG_FILE"
-            touch "$LOG_FILE"
-        else
-            error "$LOG_FILE is not writable; fix its ownership and re-run"
+    chmod 700 "$DATA_DIR" "$LOG_DIR"
+    if [ -L "$LOG_DIR" ] || [ -L "$LOG_FILE" ]; then
+        error "$LOG_FILE (or its directory) is a symbolic link; refusing to touch it. Remove the link and re-run."
+    fi
+    if [ "$SERVICE_SCOPE" != system ]; then
+        if ! touch "$LOG_FILE" 2>/dev/null; then
+            if [ -e "$LOG_FILE" ] && [ ! -f "$LOG_FILE" ]; then
+                error "$LOG_FILE is not a regular file; remove it and re-run"
+            fi
+            # Left root-owned by a pre-1.5 system-scope daemon. The user owns
+            # the directory, so the file can be moved aside without sudo.
+            warn "$LOG_FILE is not writable (root-owned by an earlier system daemon); moving it aside"
+            mv -f "$LOG_FILE" "$LOG_FILE.root-owned.$(date +%s)" || error "cannot move $LOG_FILE aside; remove it by hand and re-run"
+            touch "$LOG_FILE" || error "cannot create $LOG_FILE"
         fi
+        chmod 600 "$LOG_FILE"
     fi
 
     if [ "$SERVICE_SCOPE" = system ]; then
         ensure_sudo
+        # Root-owned log directory outside $HOME (launchd opens the log as
+        # root); the file itself belongs to the user so `hqssh service logs`
+        # and log rotation work, and is private to them.
+        if [ -e "$SYSTEM_LOG_DIR" ] && { [ -L "$SYSTEM_LOG_DIR" ] || [ "$(stat -f %u "$SYSTEM_LOG_DIR" 2>/dev/null || echo x)" != 0 ]; }; then
+            error "$SYSTEM_LOG_DIR exists but is not a root-owned directory; remove it and re-run"
+        fi
+        run_sudo mkdir -p "$SYSTEM_LOG_DIR"
+        run_sudo chown root:wheel "$SYSTEM_LOG_DIR"
+        run_sudo chmod 755 "$SYSTEM_LOG_DIR"
+        if [ -L "$SYSTEM_LOG_FILE" ]; then
+            error "$SYSTEM_LOG_FILE is a symbolic link; refusing to touch it"
+        fi
+        run_sudo touch "$SYSTEM_LOG_FILE"
+        run_sudo chown "$(id -un)" "$SYSTEM_LOG_FILE"
+        run_sudo chmod 600 "$SYSTEM_LOG_FILE"
         write_launchd_plist system > "$WORK_DIR/plist"
         run_sudo cp "$WORK_DIR/plist" "$SYSTEM_PLIST"
         run_sudo chown root:wheel "$SYSTEM_PLIST"
@@ -1025,15 +1081,16 @@ service_failed_launchd() {
         _v="$(launchd_service_field "$_domain" "$_f")"
         [ -n "$_v" ] && warn "    $_f = $_v"
     done
-    if [ -f "$LOG_FILE" ]; then
-        warn "Last log lines ($LOG_FILE):"
-        tail -n 30 "$LOG_FILE" >&2 || true
+    _lf="$(active_log_file)"
+    if [ -f "$_lf" ]; then
+        warn "Last log lines ($_lf):"
+        tail -n 30 "$_lf" >&2 || true
     fi
     printf '\n' >&2
     warn "Next steps:"
     warn "    $INSTALL_DIR/hqssh doctor"
     warn "    launchctl print $_domain/$LAUNCHD_LABEL"
-    warn "    tail -f $LOG_FILE"
+    warn "    tail -f $(active_log_file)"
     exit 3
 }
 
@@ -1076,7 +1133,7 @@ print_summary() {
             else
                 printf '  Service:   %s (launchd user agent: %s)\n' "$LAUNCHD_LABEL" "$LAUNCHD_PLIST"
             fi
-            printf '  Logs:      %s\n' "$LOG_FILE"
+            printf '  Logs:      %s\n' "$(active_log_file)"
             _service_installed=1
         fi
     fi
@@ -1166,9 +1223,14 @@ uninstall() {
 
     if [ "$PURGE_LOGS" = 1 ]; then
         rm -rf "$LOG_DIR"
+        if [ -d "$SYSTEM_LOG_DIR" ]; then
+            ensure_sudo
+            run_sudo rm -rf "$SYSTEM_LOG_DIR"
+        fi
         _logs="logs removed"
     else
         _logs="logs kept in $LOG_DIR (remove with --purge-logs)"
+        [ -d "$SYSTEM_LOG_DIR" ] && _logs="logs kept in $LOG_DIR and $SYSTEM_LOG_DIR (remove with --purge-logs)"
     fi
 
     if [ $# -gt 0 ] && [ -n "$(alive_pids "$@")" ]; then

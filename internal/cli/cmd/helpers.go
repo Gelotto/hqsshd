@@ -65,6 +65,7 @@ func connectDaemon(ctx context.Context) (*client.Client, string, error) {
 			KeyPath:         cfg.Key,
 			Password:        cfg.Password,
 			InsecureHostKey: insecureKey,
+			DaemonPort:      cfg.DaemonPort,
 		})
 		if err != nil {
 			return nil, "", fmt.Errorf("connect: %w", err)
@@ -272,6 +273,8 @@ func attachToSession(ctx context.Context, cancel context.CancelFunc, c *client.C
 		return fmt.Errorf("input stream: %w", err)
 	}
 
+	fmt.Fprintf(os.Stderr, "Detach: Ctrl+B then d\n")
+
 	// Set terminal to raw mode
 	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
 	if err != nil {
@@ -291,6 +294,7 @@ func attachToSession(ctx context.Context, cancel context.CancelFunc, c *client.C
 		defer inputWg.Done()
 		defer inputStream.CloseSend()
 		buf := make([]byte, 1024)
+		var scanner detachScanner
 		for {
 			select {
 			case <-ctx.Done():
@@ -303,14 +307,22 @@ func attachToSession(ctx context.Context, cancel context.CancelFunc, c *client.C
 				return
 			}
 
-			if n > 0 {
+			// Raw mode disables ISIG, so every byte (Ctrl+C, Ctrl+D) belongs
+			// to the session; the only way out is the detach prefix.
+			send, detach := scanner.scan(buf[:n])
+			if len(send) > 0 {
 				err = inputStream.Send(&pb.TerminalInput{
 					SessionId: sessionID,
-					Data:      buf[:n],
+					Data:      send,
 				})
 				if err != nil {
 					return
 				}
+			}
+			if detach {
+				fmt.Fprintf(os.Stderr, "\r\nDetaching...\r\n")
+				cancel()
+				return
 			}
 		}
 	}()
@@ -364,4 +376,64 @@ func handleResizeSignal(ctx context.Context, c *client.Client, sessionID string)
 			})
 		}
 	}
+}
+
+// detachPrefix is the tmux-style escape byte (Ctrl+B) that introduces a
+// CLI command while attached; the prefix followed by 'd' detaches.
+const detachPrefix = 0x02
+
+// detachScanner recognises the detach chord across stdin reads: the two
+// bytes may arrive in separate reads.
+type detachScanner struct {
+	armed bool // a prefix byte was seen and not yet resolved
+}
+
+// scan returns the bytes of buf to forward to the session and whether the
+// detach chord completed (bytes after it are discarded). Prefix+prefix
+// forwards one literal prefix byte; prefix+anything else forwards both.
+func (d *detachScanner) scan(buf []byte) (send []byte, detach bool) {
+	send = make([]byte, 0, len(buf))
+	for _, b := range buf {
+		if d.armed {
+			d.armed = false
+			switch b {
+			case 'd':
+				return send, true
+			case detachPrefix:
+				send = append(send, detachPrefix)
+			default:
+				send = append(send, detachPrefix, b)
+			}
+			continue
+		}
+		if b == detachPrefix {
+			d.armed = true
+			continue
+		}
+		send = append(send, b)
+	}
+	return send, false
+}
+
+// resolveTool picks the tool for a new session or task. With no explicit
+// choice the daemon's first detected AI tool is used; "shell" is refused up
+// front when the daemon has not enabled it, with the config key to set.
+func resolveTool(ctx context.Context, c *client.Client, tool string) (string, error) {
+	info, err := c.SystemService.GetInfo(ctx, &pb.Empty{})
+	if err != nil {
+		if tool != "" {
+			return tool, nil // let the daemon validate it
+		}
+		return "", fmt.Errorf("cannot pick a default tool (daemon info: %w); pass --tool", err)
+	}
+	if tool == "" {
+		if len(info.GetInstalledTools()) == 0 {
+			return "", fmt.Errorf("no AI tools detected on the daemon; pass --tool (shell needs enable_shell_tool: true in its daemon.yaml)")
+		}
+		return info.GetInstalledTools()[0], nil
+	}
+	if tool == "shell" && !info.GetShellEnabled() {
+		return "", fmt.Errorf(`tool "shell" is disabled on the daemon: set enable_shell_tool: true in ~/.hqssh/daemon.yaml and restart it`)
+	}
+	return tool, nil
 }

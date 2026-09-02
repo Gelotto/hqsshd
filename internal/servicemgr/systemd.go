@@ -108,12 +108,26 @@ func ParseLinger(stdout string) (linger bool, ok bool) {
 
 // SystemdStatus queries systemctl for the unit.
 func (s Service) SystemdStatus(ctx context.Context, r Runner) SystemdStatus {
-	stdout, stderr, _, err := r.Run(ctx, "systemctl", "--user", "show", s.Label, "-p", systemdShowProps)
-	st := ParseSystemctlShow(stdout, stderr)
-	if err != nil && st.Stderr == "" {
-		st.Stderr = err.Error()
-	}
+	st, _ := s.systemdStatusErr(ctx, r)
 	return st
+}
+
+// systemdStatusErr is SystemdStatus that reports a systemctl that could not
+// run at all (binary missing, no user manager) as an error rather than as
+// a unit that is not installed.
+func (s Service) systemdStatusErr(ctx context.Context, r Runner) (SystemdStatus, error) {
+	stdout, stderr, code, err := r.Run(ctx, "systemctl", "--user", "show", s.Label, "-p", systemdShowProps)
+	st := ParseSystemctlShow(stdout, stderr)
+	if err != nil {
+		if st.Stderr == "" {
+			st.Stderr = err.Error()
+		}
+		return st, fmt.Errorf("systemctl --user show %s: %w", s.Label, err)
+	}
+	if code != 0 && strings.TrimSpace(stdout) == "" {
+		return st, fmt.Errorf("systemctl --user show %s: exit %d: %s", s.Label, code, strings.TrimSpace(stderr))
+	}
+	return st, nil
 }
 
 // LingerEnabled reports whether the user's session lingers (services keep

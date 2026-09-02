@@ -27,14 +27,37 @@ func DataDir() (string, error) {
 	return config.DataDir()
 }
 
-// DefaultLogFile is where the installer points launchd's StandardOutPath /
-// StandardErrorPath. On Linux the daemon logs to journald instead.
+// DefaultLogFile is where the installer points a launchd user agent's
+// StandardOutPath / StandardErrorPath. On Linux the daemon logs to journald
+// instead.
 func DefaultLogFile() string {
 	dir, err := DataDir()
 	if err != nil {
 		return ""
 	}
 	return filepath.Join(dir, "logs", "hqsshd.log")
+}
+
+// SystemLogFile is the launchd system daemon's log. launchd opens the
+// StandardOutPath as root, so it must not live under the user's HOME
+// (a user-plantable symlink there would be followed by root); the
+// installer creates the directory root-owned.
+const SystemLogFile = "/Library/Logs/hqsshd/hqsshd.log"
+
+// LogFile returns the launchd log location for a service scope.
+func LogFile(scope Scope) string {
+	if scope == ScopeSystem {
+		return SystemLogFile
+	}
+	return DefaultLogFile()
+}
+
+// LogFileFor is LogFile for an optional service (nil = user default).
+func LogFileFor(svc *Service) string {
+	if svc == nil {
+		return DefaultLogFile()
+	}
+	return LogFile(svc.Scope)
 }
 
 // MaxSocketPathLen is the longest Unix socket path this OS accepts: the

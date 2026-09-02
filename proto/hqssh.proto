@@ -40,6 +40,7 @@ message SystemInfo {
   string daemon_version = 4;
   repeated string installed_tools = 5;  // ['claude', 'codex', 'aider']
   string commit = 6;                    // Git commit the daemon was built from
+  bool shell_enabled = 7;               // enable_shell_tool is set: 'shell' is accepted for sessions/tasks
 }
 
 message SystemStatus {
@@ -410,16 +411,18 @@ message CreateTaskRequest {
   int32 timeout_seconds = 8;
 }
 
+// Update merges: only fields that are present in the request change.
+// Clients that want to clear a text field send it present and empty.
 message UpdateTaskRequest {
   string id = 1;
-  string name = 2;
-  string description = 3;
-  string tool = 4;
-  TaskScope scope = 5;
-  string project_id = 6;
-  string prompt = 7;
-  bool interactive = 8;
-  int32 timeout_seconds = 9;
+  optional string name = 2;
+  optional string description = 3;
+  optional string tool = 4;
+  optional TaskScope scope = 5;
+  optional string project_id = 6;
+  optional string prompt = 7;
+  optional bool interactive = 8;
+  optional int32 timeout_seconds = 9;
 }
 
 message DeleteTaskRequest {

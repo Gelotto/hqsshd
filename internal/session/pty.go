@@ -15,10 +15,12 @@
 package session
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 	"time"
 
@@ -127,16 +129,19 @@ func (s *Session) buildCommand() (*exec.Cmd, error) {
 	// Set working directory
 	cmd.Dir = s.WorkingDirectory
 
-	// Get dimensions (thread-safe)
-	cols, rows := s.GetDimensions()
-
 	// Set environment - the login shell will source user's config files
-	// and override/extend these with the user's PATH, etc.
-	cmd.Env = append(os.Environ(),
-		"TERM=xterm-256color",
-		fmt.Sprintf("COLUMNS=%d", cols),
-		fmt.Sprintf("LINES=%d", rows),
-	)
+	// and override/extend these with the user's PATH, etc. COLUMNS/LINES
+	// are deliberately NOT exported: programs that honour them (Python's
+	// shutil, ncurses use_env) would freeze at the creation size and ignore
+	// every later Resize; the PTY winsize plus SIGWINCH is authoritative.
+	env := make([]string, 0, len(os.Environ())+1)
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, "COLUMNS=") || strings.HasPrefix(kv, "LINES=") {
+			continue
+		}
+		env = append(env, kv)
+	}
+	cmd.Env = append(env, "TERM=xterm-256color")
 
 	return cmd, nil
 }
@@ -293,14 +298,18 @@ func (s *Session) Kill() error {
 	// Negative PID targets the process group (setsid makes PID = PGID).
 	pid := s.cmd.Pid
 	if err := syscall.Kill(-pid, syscall.SIGTERM); err != nil {
+		if errors.Is(err, syscall.ESRCH) {
+			// The group is already gone (normal after a natural exit)
+			return nil
+		}
 		// If SIGTERM fails, try SIGKILL on the process group
 		logging.Debug("SIGTERM to process group failed, sending SIGKILL",
 			"session_id", s.ID,
 			"error", err,
 		)
-		if killErr := syscall.Kill(-s.cmd.Pid, syscall.SIGKILL); killErr != nil {
+		if killErr := syscall.Kill(-s.cmd.Pid, syscall.SIGKILL); killErr != nil && !errors.Is(killErr, syscall.ESRCH) {
 			// Final fallback: kill just the main process
-			if fallbackErr := s.cmd.Kill(); fallbackErr != nil {
+			if fallbackErr := s.cmd.Kill(); fallbackErr != nil && !errors.Is(fallbackErr, os.ErrProcessDone) {
 				logging.Error("failed to kill process",
 					"session_id", s.ID,
 					"error", fallbackErr,

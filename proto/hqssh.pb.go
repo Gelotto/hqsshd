@@ -292,6 +292,7 @@ type SystemInfo struct {
 	DaemonVersion  string                 `protobuf:"bytes,4,opt,name=daemon_version,json=daemonVersion,proto3" json:"daemon_version,omitempty"`
 	InstalledTools []string               `protobuf:"bytes,5,rep,name=installed_tools,json=installedTools,proto3" json:"installed_tools,omitempty"` // ['claude', 'codex', 'aider']
 	Commit         string                 `protobuf:"bytes,6,opt,name=commit,proto3" json:"commit,omitempty"`                                       // Git commit the daemon was built from
+	ShellEnabled   bool                   `protobuf:"varint,7,opt,name=shell_enabled,json=shellEnabled,proto3" json:"shell_enabled,omitempty"`      // enable_shell_tool is set: 'shell' is accepted for sessions/tasks
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -366,6 +367,13 @@ func (x *SystemInfo) GetCommit() string {
 		return x.Commit
 	}
 	return ""
+}
+
+func (x *SystemInfo) GetShellEnabled() bool {
+	if x != nil {
+		return x.ShellEnabled
+	}
+	return false
 }
 
 type SystemStatus struct {
@@ -2606,17 +2614,19 @@ func (x *CreateTaskRequest) GetTimeoutSeconds() int32 {
 	return 0
 }
 
+// Update merges: only fields that are present in the request change.
+// Clients that want to clear a text field send it present and empty.
 type UpdateTaskRequest struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	Id             string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Name           string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
-	Description    string                 `protobuf:"bytes,3,opt,name=description,proto3" json:"description,omitempty"`
-	Tool           string                 `protobuf:"bytes,4,opt,name=tool,proto3" json:"tool,omitempty"`
-	Scope          TaskScope              `protobuf:"varint,5,opt,name=scope,proto3,enum=hqssh.TaskScope" json:"scope,omitempty"`
-	ProjectId      string                 `protobuf:"bytes,6,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
-	Prompt         string                 `protobuf:"bytes,7,opt,name=prompt,proto3" json:"prompt,omitempty"`
-	Interactive    bool                   `protobuf:"varint,8,opt,name=interactive,proto3" json:"interactive,omitempty"`
-	TimeoutSeconds int32                  `protobuf:"varint,9,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`
+	Name           *string                `protobuf:"bytes,2,opt,name=name,proto3,oneof" json:"name,omitempty"`
+	Description    *string                `protobuf:"bytes,3,opt,name=description,proto3,oneof" json:"description,omitempty"`
+	Tool           *string                `protobuf:"bytes,4,opt,name=tool,proto3,oneof" json:"tool,omitempty"`
+	Scope          *TaskScope             `protobuf:"varint,5,opt,name=scope,proto3,enum=hqssh.TaskScope,oneof" json:"scope,omitempty"`
+	ProjectId      *string                `protobuf:"bytes,6,opt,name=project_id,json=projectId,proto3,oneof" json:"project_id,omitempty"`
+	Prompt         *string                `protobuf:"bytes,7,opt,name=prompt,proto3,oneof" json:"prompt,omitempty"`
+	Interactive    *bool                  `protobuf:"varint,8,opt,name=interactive,proto3,oneof" json:"interactive,omitempty"`
+	TimeoutSeconds *int32                 `protobuf:"varint,9,opt,name=timeout_seconds,json=timeoutSeconds,proto3,oneof" json:"timeout_seconds,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -2659,57 +2669,57 @@ func (x *UpdateTaskRequest) GetId() string {
 }
 
 func (x *UpdateTaskRequest) GetName() string {
-	if x != nil {
-		return x.Name
+	if x != nil && x.Name != nil {
+		return *x.Name
 	}
 	return ""
 }
 
 func (x *UpdateTaskRequest) GetDescription() string {
-	if x != nil {
-		return x.Description
+	if x != nil && x.Description != nil {
+		return *x.Description
 	}
 	return ""
 }
 
 func (x *UpdateTaskRequest) GetTool() string {
-	if x != nil {
-		return x.Tool
+	if x != nil && x.Tool != nil {
+		return *x.Tool
 	}
 	return ""
 }
 
 func (x *UpdateTaskRequest) GetScope() TaskScope {
-	if x != nil {
-		return x.Scope
+	if x != nil && x.Scope != nil {
+		return *x.Scope
 	}
 	return TaskScope_TASK_SCOPE_UNSPECIFIED
 }
 
 func (x *UpdateTaskRequest) GetProjectId() string {
-	if x != nil {
-		return x.ProjectId
+	if x != nil && x.ProjectId != nil {
+		return *x.ProjectId
 	}
 	return ""
 }
 
 func (x *UpdateTaskRequest) GetPrompt() string {
-	if x != nil {
-		return x.Prompt
+	if x != nil && x.Prompt != nil {
+		return *x.Prompt
 	}
 	return ""
 }
 
 func (x *UpdateTaskRequest) GetInteractive() bool {
-	if x != nil {
-		return x.Interactive
+	if x != nil && x.Interactive != nil {
+		return *x.Interactive
 	}
 	return false
 }
 
 func (x *UpdateTaskRequest) GetTimeoutSeconds() int32 {
-	if x != nil {
-		return x.TimeoutSeconds
+	if x != nil && x.TimeoutSeconds != nil {
+		return *x.TimeoutSeconds
 	}
 	return 0
 }
@@ -3123,7 +3133,7 @@ var File_proto_hqssh_proto protoreflect.FileDescriptor
 const file_proto_hqssh_proto_rawDesc = "" +
 	"\n" +
 	"\x11proto/hqssh.proto\x12\x05hqssh\"\a\n" +
-	"\x05Empty\"\xb4\x01\n" +
+	"\x05Empty\"\xd9\x01\n" +
 	"\n" +
 	"SystemInfo\x12\x1a\n" +
 	"\bhostname\x18\x01 \x01(\tR\bhostname\x12\x0e\n" +
@@ -3131,7 +3141,8 @@ const file_proto_hqssh_proto_rawDesc = "" +
 	"\x04arch\x18\x03 \x01(\tR\x04arch\x12%\n" +
 	"\x0edaemon_version\x18\x04 \x01(\tR\rdaemonVersion\x12'\n" +
 	"\x0finstalled_tools\x18\x05 \x03(\tR\x0einstalledTools\x12\x16\n" +
-	"\x06commit\x18\x06 \x01(\tR\x06commit\"\x99\x01\n" +
+	"\x06commit\x18\x06 \x01(\tR\x06commit\x12#\n" +
+	"\rshell_enabled\x18\a \x01(\bR\fshellEnabled\"\x99\x01\n" +
 	"\fSystemStatus\x12%\n" +
 	"\x0euptime_seconds\x18\x01 \x01(\x03R\ruptimeSeconds\x12'\n" +
 	"\x0factive_sessions\x18\x02 \x01(\x05R\x0eactiveSessions\x12'\n" +
@@ -3304,18 +3315,26 @@ const file_proto_hqssh_proto_rawDesc = "" +
 	"project_id\x18\x05 \x01(\tR\tprojectId\x12\x16\n" +
 	"\x06prompt\x18\x06 \x01(\tR\x06prompt\x12 \n" +
 	"\vinteractive\x18\a \x01(\bR\vinteractive\x12'\n" +
-	"\x0ftimeout_seconds\x18\b \x01(\x05R\x0etimeoutSeconds\"\x97\x02\n" +
+	"\x0ftimeout_seconds\x18\b \x01(\x05R\x0etimeoutSeconds\"\xa9\x03\n" +
 	"\x11UpdateTaskRequest\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
-	"\x04name\x18\x02 \x01(\tR\x04name\x12 \n" +
-	"\vdescription\x18\x03 \x01(\tR\vdescription\x12\x12\n" +
-	"\x04tool\x18\x04 \x01(\tR\x04tool\x12&\n" +
-	"\x05scope\x18\x05 \x01(\x0e2\x10.hqssh.TaskScopeR\x05scope\x12\x1d\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x17\n" +
+	"\x04name\x18\x02 \x01(\tH\x00R\x04name\x88\x01\x01\x12%\n" +
+	"\vdescription\x18\x03 \x01(\tH\x01R\vdescription\x88\x01\x01\x12\x17\n" +
+	"\x04tool\x18\x04 \x01(\tH\x02R\x04tool\x88\x01\x01\x12+\n" +
+	"\x05scope\x18\x05 \x01(\x0e2\x10.hqssh.TaskScopeH\x03R\x05scope\x88\x01\x01\x12\"\n" +
 	"\n" +
-	"project_id\x18\x06 \x01(\tR\tprojectId\x12\x16\n" +
-	"\x06prompt\x18\a \x01(\tR\x06prompt\x12 \n" +
-	"\vinteractive\x18\b \x01(\bR\vinteractive\x12'\n" +
-	"\x0ftimeout_seconds\x18\t \x01(\x05R\x0etimeoutSeconds\",\n" +
+	"project_id\x18\x06 \x01(\tH\x04R\tprojectId\x88\x01\x01\x12\x1b\n" +
+	"\x06prompt\x18\a \x01(\tH\x05R\x06prompt\x88\x01\x01\x12%\n" +
+	"\vinteractive\x18\b \x01(\bH\x06R\vinteractive\x88\x01\x01\x12,\n" +
+	"\x0ftimeout_seconds\x18\t \x01(\x05H\aR\x0etimeoutSeconds\x88\x01\x01B\a\n" +
+	"\x05_nameB\x0e\n" +
+	"\f_descriptionB\a\n" +
+	"\x05_toolB\b\n" +
+	"\x06_scopeB\r\n" +
+	"\v_project_idB\t\n" +
+	"\a_promptB\x0e\n" +
+	"\f_interactiveB\x12\n" +
+	"\x10_timeout_seconds\",\n" +
 	"\x11DeleteTaskRequest\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\")\n" +
 	"\x0eRunTaskRequest\x12\x17\n" +
@@ -3553,6 +3572,7 @@ func file_proto_hqssh_proto_init() {
 	if File_proto_hqssh_proto != nil {
 		return
 	}
+	file_proto_hqssh_proto_msgTypes[40].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

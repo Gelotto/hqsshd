@@ -122,6 +122,12 @@ func main() {
 	// PATH that misses per-user tool installs (e.g. claude in ~/.local/bin).
 	shellutil.EnsureUserPATH()
 
+	// Register for shutdown signals before the slow startup steps (store
+	// loading, tool detection): a SIGTERM that lands there is then handled
+	// rather than terminating the process without a "stopped" log line.
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
 	// Create server (runs the single-instance check first)
 	srv, err := server.NewServer(cfg)
 	if err != nil {
@@ -134,8 +140,6 @@ func main() {
 
 	// Handle shutdown signals. Stop is safe before Listen, so a signal that
 	// lands during startup still shuts down cleanly.
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		sig := <-sigChan
 		logging.Info("received shutdown signal", "signal", sig.String())

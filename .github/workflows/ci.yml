@@ -34,6 +34,9 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
   shellcheck:
     runs-on: ubuntu-latest
     steps:

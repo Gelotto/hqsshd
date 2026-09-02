@@ -156,8 +156,21 @@ func (s *Store) Get(id string) *Task {
 	return &cp
 }
 
-// Update updates an existing task
-func (s *Store) Update(id, name, description, tool string, scope TaskScope, projectID, prompt string, interactive bool, timeoutSeconds int) *Task {
+// Patch describes a partial task update: nil fields are left unchanged.
+type Patch struct {
+	Name           *string
+	Description    *string
+	Tool           *string
+	Scope          *TaskScope
+	ProjectID      *string
+	Prompt         *string
+	Interactive    *bool
+	TimeoutSeconds *int
+}
+
+// Update merges patch into an existing task and returns a copy of the
+// result, or nil when the task does not exist.
+func (s *Store) Update(id string, patch Patch) *Task {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -166,17 +179,34 @@ func (s *Store) Update(id, name, description, tool string, scope TaskScope, proj
 		return nil
 	}
 
-	task.Name = name
-	task.Description = description
-	task.Tool = tool
-	task.Scope = scope
-	task.ProjectID = projectID
-	task.Prompt = prompt
-	task.Interactive = interactive
-	task.TimeoutSeconds = timeoutSeconds
+	if patch.Name != nil {
+		task.Name = *patch.Name
+	}
+	if patch.Description != nil {
+		task.Description = *patch.Description
+	}
+	if patch.Tool != nil {
+		task.Tool = *patch.Tool
+	}
+	if patch.Scope != nil {
+		task.Scope = *patch.Scope
+	}
+	if patch.ProjectID != nil {
+		task.ProjectID = *patch.ProjectID
+	}
+	if patch.Prompt != nil {
+		task.Prompt = *patch.Prompt
+	}
+	if patch.Interactive != nil {
+		task.Interactive = *patch.Interactive
+	}
+	if patch.TimeoutSeconds != nil {
+		task.TimeoutSeconds = *patch.TimeoutSeconds
+	}
 	task.UpdatedAt = time.Now()
 
-	return task
+	cp := *task
+	return &cp
 }
 
 // Delete removes a task by ID

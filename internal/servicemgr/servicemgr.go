@@ -232,7 +232,7 @@ func (s Service) StatusCommand() string {
 func (s Service) LogsCommand() string {
 	switch s.Kind {
 	case KindLaunchd:
-		return "tail -f " + DefaultLogFile()
+		return "tail -f " + LogFile(s.Scope)
 	case KindSystemd:
 		return "journalctl --user -u " + s.Label + " -f"
 	default:

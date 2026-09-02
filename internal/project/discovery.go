@@ -166,7 +166,13 @@ func (d *Discovery) createProject(path string) *Project {
 
 // CreateFromPath creates a project from a specific path
 func (d *Discovery) CreateFromPath(path, name string) (*Project, error) {
-	path = expandHome(path)
+	// Normalise so the same directory always yields the same project ID:
+	// "repo/" and "repo", or a relative spelling, must not register twice.
+	abs, err := filepath.Abs(filepath.Clean(expandHome(path)))
+	if err != nil {
+		return nil, err
+	}
+	path = abs
 
 	// Verify path exists
 	info, err := os.Stat(path)

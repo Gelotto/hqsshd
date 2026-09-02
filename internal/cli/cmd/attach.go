@@ -32,8 +32,9 @@ var attachCmd = &cobra.Command{
 This is the core handoff feature: start a session from your mobile device,
 then continue it from your desktop.
 
-The session will remain active after you detach (Ctrl-D or close terminal).
-Other clients (including your mobile device) can remain connected.`,
+Detach with Ctrl+B then d; the session keeps running and other clients
+(including your mobile device) stay connected. Every other key, including
+Ctrl+C and Ctrl+D, goes to the session (Ctrl+D ends a shell session).`,
 	Args: cobra.ExactArgs(1),
 	RunE: runAttach,
 }

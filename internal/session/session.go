@@ -461,32 +461,22 @@ func (s *Session) broadcast(data []byte) {
 			defer func() { recover() }()
 
 			// A marker is owed from an earlier drop: place it exactly where
-			// the gap is, before the next chunk that fits. If it does not fit
-			// either, the flag stays set and the consumer picks it up after
-			// draining (TakeOutputGap).
+			// the gap is, before the next chunk. It gets the same bounded
+			// wait as data; if it still does not fit, this chunk is dropped
+			// too (it must not overtake the marker) and the flag stays set
+			// so the consumer picks the marker up after draining
+			// (TakeOutputGap).
 			if cs.gapPending.Load() {
-				select {
-				case cs.ch <- gapMarker:
-					cs.gapPending.Store(false)
-				default:
+				if !sendBounded(cs.ch, gapMarker) {
+					cs.dropCount++
+					cs.lastDropTime = time.Now()
+					return
 				}
+				cs.gapPending.Store(false)
 			}
 
-			// Fast path: room in the queue.
-			select {
-			case cs.ch <- data:
+			if sendBounded(cs.ch, data) {
 				return
-			default:
-			}
-
-			// Queue full: wait a bounded time for the consumer (a slow link is
-			// the normal reason) before giving up on this chunk.
-			timer := time.NewTimer(clientSendTimeout)
-			defer timer.Stop()
-			select {
-			case cs.ch <- data:
-				return
-			case <-timer.C:
 			}
 
 			cs.dropCount++
@@ -501,6 +491,25 @@ func (s *Session) broadcast(data []byte) {
 				)
 			}
 		}()
+	}
+}
+
+// sendBounded queues item for a client: fast path when there is room,
+// otherwise a bounded wait for the consumer (a slow link is the normal
+// reason). Returns false when the item could not be queued in time.
+func sendBounded(ch chan<- []byte, item []byte) bool {
+	select {
+	case ch <- item:
+		return true
+	default:
+	}
+	timer := time.NewTimer(clientSendTimeout)
+	defer timer.Stop()
+	select {
+	case ch <- item:
+		return true
+	case <-timer.C:
+		return false
 	}
 }
 

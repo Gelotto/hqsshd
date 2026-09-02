@@ -40,9 +40,9 @@ type Manager struct {
 	closed           atomic.Bool    // Prevent double-close panic
 
 	// Persistence
-	store        *Store // Session metadata persistence
-	logDir       string // Directory for session logs
-	retentionDays int   // Days to keep ended session logs (0 = forever)
+	store         *Store // Session metadata persistence
+	logDir        string // Directory for session logs
+	retentionDays int    // Days to keep ended session logs (0 = forever)
 
 	// Event fan-out for watchers (mobile app notifications)
 	events *EventHub
@@ -238,13 +238,23 @@ func (m *Manager) Create(projectID, tool, workingDir, name string, args []string
 		return nil, fmt.Errorf("session manager is shut down")
 	}
 
-	// Check max sessions limit
-	if m.maxSessions > 0 && len(m.sessions) >= m.maxSessions {
-		logging.Warn("max sessions limit reached",
-			"max_sessions", m.maxSessions,
-			"current_sessions", len(m.sessions),
-		)
-		return nil, fmt.Errorf("maximum sessions limit (%d) reached", m.maxSessions)
+	// Check max sessions limit against live sessions only: ended sessions
+	// stay in the map until the cleanup tick (up to a minute) for late
+	// attach/log access and must not count toward the limit.
+	if m.maxSessions > 0 {
+		live := 0
+		for _, s := range m.sessions {
+			if s.Status() != StatusEnded {
+				live++
+			}
+		}
+		if live >= m.maxSessions {
+			logging.Warn("max sessions limit reached",
+				"max_sessions", m.maxSessions,
+				"current_sessions", live,
+			)
+			return nil, fmt.Errorf("maximum sessions limit (%d) reached", m.maxSessions)
+		}
 	}
 
 	// Create session with config-based buffer size

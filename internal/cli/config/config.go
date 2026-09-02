@@ -31,22 +31,27 @@ type Config struct {
 
 // Host holds connection settings for a named host.
 type Host struct {
-	Host     string `yaml:"host"`     // Actual hostname (optional, defaults to key name)
-	User     string `yaml:"user"`
-	Port     int    `yaml:"port"`
-	Key      string `yaml:"key"`
-	Password string `yaml:"password"` // Not recommended
+	Host       string `yaml:"host"` // Actual hostname (optional, defaults to key name)
+	User       string `yaml:"user"`
+	Port       int    `yaml:"port"`
+	Key        string `yaml:"key"`
+	Password   string `yaml:"password"`    // Not recommended
+	DaemonPort int    `yaml:"daemon_port"` // hqsshd tcp_port on that host (default 50051)
 }
 
 // Resolved holds the final resolved connection settings after
 // applying CLI flags > env vars > config file > defaults.
 type Resolved struct {
-	Host     string
-	User     string
-	Port     int
-	Key      string
-	Password string
+	Host       string
+	User       string
+	Port       int
+	Key        string
+	Password   string
+	DaemonPort int
 }
+
+// DefaultDaemonPort is hqsshd's default tcp_port.
+const DefaultDaemonPort = 50051
 
 var globalConfig *Config
 
@@ -91,11 +96,12 @@ func Load() *Config {
 
 // Resolve computes final connection settings from all sources.
 // Priority: CLI flag > environment variable > config file > default
-func Resolve(cliHost, cliUser, cliKey, cliPassword string, cliPort int) Resolved {
+func Resolve(cliHost, cliUser, cliKey, cliPassword string, cliPort, cliDaemonPort int) Resolved {
 	cfg := Load()
 	r := Resolved{
-		Port: 22,
-		User: os.Getenv("USER"),
+		Port:       22,
+		User:       os.Getenv("USER"),
+		DaemonPort: DefaultDaemonPort,
 	}
 
 	// Start with config file defaults
@@ -119,6 +125,9 @@ func Resolve(cliHost, cliUser, cliKey, cliPassword string, cliPort int) Resolved
 			if hostCfg.Password != "" {
 				r.Password = hostCfg.Password
 			}
+			if hostCfg.DaemonPort != 0 {
+				r.DaemonPort = hostCfg.DaemonPort
+			}
 		} else {
 			r.Host = cfg.DefaultHost
 		}
@@ -138,6 +147,11 @@ func Resolve(cliHost, cliUser, cliKey, cliPassword string, cliPort int) Resolved
 	}
 	if env := os.Getenv("HQSSH_KEY"); env != "" {
 		r.Key = expandPath(env)
+	}
+	if env := os.Getenv("HQSSH_DAEMON_PORT"); env != "" {
+		if p, err := strconv.Atoi(env); err == nil {
+			r.DaemonPort = p
+		}
 	}
 
 	// CLI flags override everything
@@ -162,6 +176,9 @@ func Resolve(cliHost, cliUser, cliKey, cliPassword string, cliPort int) Resolved
 			if cliPassword == "" && hostCfg.Password != "" {
 				r.Password = hostCfg.Password
 			}
+			if cliDaemonPort == 0 && hostCfg.DaemonPort != 0 {
+				r.DaemonPort = hostCfg.DaemonPort
+			}
 		} else {
 			r.Host = cliHost
 		}
@@ -177,6 +194,9 @@ func Resolve(cliHost, cliUser, cliKey, cliPassword string, cliPort int) Resolved
 	}
 	if cliPassword != "" {
 		r.Password = cliPassword
+	}
+	if cliDaemonPort != 0 {
+		r.DaemonPort = cliDaemonPort
 	}
 
 	return r

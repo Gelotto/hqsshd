@@ -22,6 +22,7 @@ import (
 
 	pb "github.com/gelotto/hqsshd/proto"
 	"github.com/spf13/cobra"
+	"google.golang.org/protobuf/proto"
 )
 
 var (
@@ -87,7 +88,7 @@ func init() {
 	// Create flags
 	taskCreateCmd.Flags().StringVar(&taskCreateName, "name", "", "Task name (required)")
 	taskCreateCmd.Flags().StringVar(&taskCreateDescription, "description", "", "Task description")
-	taskCreateCmd.Flags().StringVar(&taskCreateTool, "tool", "shell", "Tool: claude, codex, aider, shell")
+	taskCreateCmd.Flags().StringVar(&taskCreateTool, "tool", "", "Tool: claude, codex, aider, shell (default: first detected AI tool)")
 	taskCreateCmd.Flags().StringVar(&taskCreateScope, "scope", "system", "Scope: system, project")
 	taskCreateCmd.Flags().StringVar(&taskCreateProject, "project", "", "Project ID (required for project scope)")
 	taskCreateCmd.Flags().StringVar(&taskCreatePrompt, "prompt", "", "Command or prompt to execute")
@@ -131,10 +132,15 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--project is required when scope is 'project'")
 	}
 
+	tool, err := resolveTool(ctx, c, taskCreateTool)
+	if err != nil {
+		return err
+	}
+
 	task, err := c.TaskService.Create(ctx, &pb.CreateTaskRequest{
 		Name:           taskCreateName,
 		Description:    taskCreateDescription,
-		Tool:           taskCreateTool,
+		Tool:           tool,
 		Scope:          scope,
 		ProjectId:      taskCreateProject,
 		Prompt:         taskCreatePrompt,
@@ -173,24 +179,42 @@ func runTaskUpdate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	scope := pb.TaskScope_TASK_SCOPE_UNSPECIFIED
-	if taskUpdateScope != "" {
-		scope = parseScope(taskUpdateScope)
+	// Update merges: only flags the user actually passed are sent, so
+	// `task update <id> --name x` leaves tool/prompt/timeout untouched.
+	// An explicitly empty flag (--description "") clears that field.
+	req := &pb.UpdateTaskRequest{Id: taskID}
+	flags := cmd.Flags()
+	if flags.Changed("name") {
+		req.Name = proto.String(taskUpdateName)
+	}
+	if flags.Changed("description") {
+		req.Description = proto.String(taskUpdateDescription)
+	}
+	if flags.Changed("tool") {
+		req.Tool = proto.String(taskUpdateTool)
+	}
+	if flags.Changed("scope") {
+		scope := parseScope(taskUpdateScope)
 		if scope == pb.TaskScope_TASK_SCOPE_UNSPECIFIED {
 			return fmt.Errorf("invalid scope: %s (use 'system' or 'project')", taskUpdateScope)
 		}
+		req.Scope = scope.Enum()
+	}
+	if flags.Changed("project") {
+		req.ProjectId = proto.String(taskUpdateProject)
+	}
+	if flags.Changed("prompt") {
+		req.Prompt = proto.String(taskUpdatePrompt)
+	}
+	if flags.Changed("timeout") {
+		req.TimeoutSeconds = proto.Int32(int32(taskUpdateTimeout))
+	}
+	if req.Name == nil && req.Description == nil && req.Tool == nil && req.Scope == nil &&
+		req.ProjectId == nil && req.Prompt == nil && req.TimeoutSeconds == nil {
+		return fmt.Errorf("nothing to update: pass at least one of --name, --description, --tool, --scope, --project, --prompt, --timeout")
 	}
 
-	task, err := c.TaskService.Update(ctx, &pb.UpdateTaskRequest{
-		Id:             taskID,
-		Name:           taskUpdateName,
-		Description:    taskUpdateDescription,
-		Tool:           taskUpdateTool,
-		Scope:          scope,
-		ProjectId:      taskUpdateProject,
-		Prompt:         taskUpdatePrompt,
-		TimeoutSeconds: int32(taskUpdateTimeout),
-	})
+	task, err := c.TaskService.Update(ctx, req)
 	if err != nil {
 		return fmt.Errorf("update task: %w", err)
 	}

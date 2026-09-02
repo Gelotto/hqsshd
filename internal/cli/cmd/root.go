@@ -36,6 +36,7 @@ var (
 	usePassword bool // prompt for password interactively
 	insecureKey bool
 	socket      string
+	daemonPort  int // remote daemon TCP port reached through the SSH tunnel
 )
 
 var rootCmd = &cobra.Command{
@@ -91,6 +92,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&usePassword, "password", "p", false, "Prompt for SSH password")
 	rootCmd.PersistentFlags().BoolVar(&insecureKey, "insecure", false, "Skip host key verification")
 	rootCmd.PersistentFlags().StringVarP(&socket, "socket", "S", "", "Unix socket path (local daemon)")
+	rootCmd.PersistentFlags().IntVar(&daemonPort, "daemon-port", 0, "Remote daemon TCP port (tcp_port in its daemon.yaml; default 50051)")
 
 	// `hqssh --version` / `-v`
 	rootCmd.Version = buildVersion()
@@ -131,7 +133,7 @@ func resolveConfig() config.Resolved {
 		cliPassword = pw
 	}
 
-	return config.Resolve(host, cliUser, keyPath, cliPassword, cliPort)
+	return config.Resolve(host, cliUser, keyPath, cliPassword, cliPort, daemonPort)
 }
 
 // promptPassword reads a password from the terminal without echoing.

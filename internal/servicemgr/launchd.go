@@ -139,15 +139,47 @@ func launchdDomains(uid int) []string {
 // launchctlPrint runs `launchctl print <target>` and parses it. Reading a
 // job's state works unprivileged in every domain, including system/; only
 // mutations need sudo.
-func (s Service) launchctlPrint(ctx context.Context, r Runner, target string) LaunchdStatus {
-	stdout, stderr, _, _ := r.Run(ctx, "launchctl", "print", target)
-	return ParseLaunchctlPrint(stdout, stderr)
+func (s Service) launchctlPrint(ctx context.Context, r Runner, target string) (LaunchdStatus, error) {
+	stdout, stderr, code, err := r.Run(ctx, "launchctl", "print", target)
+	if err != nil {
+		return LaunchdStatus{}, fmt.Errorf("launchctl print %s: %w", target, err)
+	}
+	st := ParseLaunchctlPrint(stdout, stderr)
+	if code != 0 && !st.Loaded && !launchctlNotFound(stderr) {
+		// launchctl itself failed for a reason other than "no such job";
+		// that is unknown state, not a job that is not loaded.
+		return st, fmt.Errorf("launchctl print %s: exit %d: %s", target, code, strings.TrimSpace(stderr))
+	}
+	return st, nil
+}
+
+// launchctlNotFound reports whether launchctl's stderr means the job or its
+// domain does not exist -- the legitimate "not loaded" answers.
+func launchctlNotFound(stderr string) bool {
+	lower := strings.ToLower(stderr)
+	for _, phrase := range []string{
+		"could not find service", "no such service",
+		"could not find domain", "does not support", "no such process", "domain does not exist",
+	} {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+	return false
 }
 
 // LaunchdStatus locates the job in whichever domain it is loaded in and
 // returns its status and that domain. When the job is loaded nowhere the
 // intended domain (s.Domain) is returned with Loaded == false.
 func (s Service) LaunchdStatus(ctx context.Context, r Runner) (LaunchdStatus, string) {
+	st, d, _ := s.LaunchdStatusErr(ctx, r)
+	return st, d
+}
+
+// LaunchdStatusErr is LaunchdStatus that also reports when launchctl could
+// not answer (not installed, failed to run, unexpected error): callers that
+// diagnose must not present that as "not loaded".
+func (s Service) LaunchdStatusErr(ctx context.Context, r Runner) (LaunchdStatus, string, error) {
 	domains := []string{s.Domain}
 	if s.Scope != ScopeSystem {
 		for _, d := range launchdDomains(s.UID) {
@@ -157,16 +189,17 @@ func (s Service) LaunchdStatus(ctx context.Context, r Runner) (LaunchdStatus, st
 		}
 	}
 	var first LaunchdStatus
+	var firstErr error
 	for i, d := range domains {
-		st := s.launchctlPrint(ctx, r, d+"/"+s.Label)
+		st, err := s.launchctlPrint(ctx, r, d+"/"+s.Label)
 		if i == 0 {
-			first = st
+			first, firstErr = st, err
 		}
-		if st.Loaded {
-			return st, d
+		if err == nil && st.Loaded {
+			return st, d, nil
 		}
 	}
-	return first, s.Domain
+	return first, s.Domain, firstErr
 }
 
 // GUIDomainAvailable reports whether launchd has a GUI login domain for uid

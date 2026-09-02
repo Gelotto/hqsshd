@@ -44,10 +44,10 @@ type SessionRecord struct {
 
 // Store manages session metadata with JSON persistence
 type Store struct {
-	records  map[string]*SessionRecord
-	mu       sync.RWMutex
-	dataDir  string
-	logDir   string
+	records map[string]*SessionRecord
+	mu      sync.RWMutex
+	dataDir string
+	logDir  string
 }
 
 // NewStore creates a new session store
@@ -81,6 +81,10 @@ func (s *Store) Load() error {
 
 	s.records = make(map[string]*SessionRecord)
 	for _, r := range records {
+		if r == nil || r.ID == "" {
+			// A hand-edited or truncated file; skip rather than crash at startup
+			continue
+		}
 		s.records[r.ID] = r
 	}
 
@@ -211,12 +215,19 @@ func (s *Store) List(projectID string, includeEnded bool) []*SessionRecord {
 
 // ListEnded returns only ended sessions (for historical view)
 func (s *Store) ListEnded(limit int) []*SessionRecord {
+	return s.ListEndedForProject("", limit)
+}
+
+// ListEndedForProject returns ended sessions, newest first, restricted to
+// projectID when it is non-empty. The filter runs before the limit so a
+// project's history is not crowded out by other projects' newer sessions.
+func (s *Store) ListEndedForProject(projectID string, limit int) []*SessionRecord {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	records := make([]*SessionRecord, 0)
 	for _, r := range s.records {
-		if r.Status == "ended" {
+		if r.Status == "ended" && (projectID == "" || r.ProjectID == projectID) {
 			copy := *r
 			records = append(records, &copy)
 		}

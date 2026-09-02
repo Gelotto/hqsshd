@@ -35,10 +35,14 @@ import (
 )
 
 const (
-	daemonPort        = 50051
+	daemonPort        = 50051 // default hqsshd tcp_port
 	sshConnectTimeout = 30 * time.Second
 	maxRetries        = 3
 	initialBackoff    = 1 * time.Second
+	// maxRecvMsgSize replaces grpc-go's 4 MiB default: a session's
+	// scrollback replay or GetScrollback answer can be up to
+	// max_scrollback_size (10 MB by default).
+	maxRecvMsgSize = 16 << 20
 )
 
 // DefaultSocketPath is the default Unix socket path for the local daemon.
@@ -46,10 +50,11 @@ const DefaultSocketPath = "/tmp/hqssh.sock"
 
 // Client connects to the daemon via SSH tunnel or local Unix socket.
 type Client struct {
-	sshClient *ssh.Client
-	grpcConn  *grpc.ClientConn
-	listener  net.Listener
-	done      chan struct{} // closed on Close() to stop keepalive goroutine
+	sshClient  *ssh.Client
+	grpcConn   *grpc.ClientConn
+	listener   net.Listener
+	done       chan struct{} // closed on Close() to stop keepalive goroutine
+	daemonPort int           // remote hqsshd tcp_port reached through the tunnel
 
 	SessionService pb.SessionServiceClient
 	ProjectService pb.ProjectServiceClient
@@ -65,16 +70,21 @@ type Config struct {
 	KeyPath         string
 	Password        string
 	InsecureHostKey bool // Skip host key verification (not recommended)
+	DaemonPort      int  // hqsshd tcp_port on the remote host (0 = 50051)
 }
 
 // Connect establishes SSH connection and gRPC tunnel.
 func Connect(ctx context.Context, cfg Config) (*Client, error) {
-	// Build SSH config
 	sshConfig, err := buildSSHConfig(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("SSH config: %w", err)
 	}
+	return connectWith(ctx, cfg, sshConfig)
+}
 
+// connectWith dials with an SSH config that was built once, so a retry
+// never re-reads keys or prompts for a passphrase again.
+func connectWith(ctx context.Context, cfg Config, sshConfig *ssh.ClientConfig) (*Client, error) {
 	// Connect to SSH
 	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
 	sshClient, err := ssh.Dial("tcp", addr, sshConfig)
@@ -109,9 +119,13 @@ func Connect(ctx context.Context, cfg Config) (*Client, error) {
 	}
 
 	c := &Client{
-		sshClient: sshClient,
-		listener:  listener,
-		done:      make(chan struct{}),
+		sshClient:  sshClient,
+		listener:   listener,
+		done:       make(chan struct{}),
+		daemonPort: cfg.DaemonPort,
+	}
+	if c.daemonPort <= 0 {
+		c.daemonPort = daemonPort
 	}
 
 	// Start forwarding goroutine
@@ -138,6 +152,7 @@ func Connect(ctx context.Context, cfg Config) (*Client, error) {
 	grpcAddr := listener.Addr().String()
 	grpcConn, err := grpc.NewClient(grpcAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxRecvMsgSize)),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                20 * time.Second,
 			Timeout:             5 * time.Second,
@@ -165,8 +180,15 @@ func ConnectWithRetry(ctx context.Context, cfg Config) (*Client, error) {
 	var lastErr error
 	backoff := initialBackoff
 
+	// Keys and passphrases are resolved once; a transient network failure
+	// must not prompt for the passphrase again on every attempt.
+	sshConfig, err := buildSSHConfig(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("SSH config: %w", err)
+	}
+
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		client, err := Connect(ctx, cfg)
+		client, err := connectWith(ctx, cfg, sshConfig)
 		if err == nil {
 			return client, nil
 		}
@@ -279,7 +301,7 @@ func (c *Client) forwardConnections() {
 		}
 
 		// Forward to daemon via SSH tunnel
-		remoteAddr := fmt.Sprintf("127.0.0.1:%d", daemonPort)
+		remoteAddr := fmt.Sprintf("127.0.0.1:%d", c.daemonPort)
 		remoteConn, err := c.sshClient.Dial("tcp", remoteAddr)
 		if err != nil {
 			localConn.Close()
@@ -356,7 +378,10 @@ func (tokenCreds) RequireTransportSecurity() bool { return false }
 // the transport is a Unix socket or 127.0.0.1) plus the auth token when
 // the daemon requires one.
 func localDialOptions(token string) []grpc.DialOption {
-	opts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
+	opts := []grpc.DialOption{
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxRecvMsgSize)),
+	}
 	if token != "" {
 		opts = append(opts, grpc.WithPerRPCCredentials(tokenCreds{token: token}))
 	}
@@ -420,14 +445,19 @@ func newLocalClient(grpcConn *grpc.ClientConn) *Client {
 func buildSSHConfig(cfg Config) (*ssh.ClientConfig, error) {
 	var authMethods []ssh.AuthMethod
 
-	// Try key auth first
+	// Try key auth first. An explicit key that cannot be loaded (wrong
+	// passphrase, unreadable, malformed) is an error in its own right, not
+	// "no authentication methods".
+	var keyProblems []string
 	if cfg.KeyPath != "" {
 		signer, err := loadPrivateKey(cfg.KeyPath)
-		if err == nil {
-			authMethods = append(authMethods, ssh.PublicKeys(signer))
+		if err != nil {
+			return nil, fmt.Errorf("load key %s: %w", cfg.KeyPath, err)
 		}
+		authMethods = append(authMethods, ssh.PublicKeys(signer))
 	} else {
-		// Try default key paths
+		// Try default key paths; a missing file is normal, a present key
+		// that fails to load is reported below.
 		for _, name := range []string{"id_ed25519", "id_rsa", "id_ecdsa"} {
 			home, _ := os.UserHomeDir()
 			keyPath := filepath.Join(home, ".ssh", name)
@@ -435,6 +465,9 @@ func buildSSHConfig(cfg Config) (*ssh.ClientConfig, error) {
 			if err == nil {
 				authMethods = append(authMethods, ssh.PublicKeys(signer))
 				break
+			}
+			if !os.IsNotExist(err) {
+				keyProblems = append(keyProblems, fmt.Sprintf("%s: %v", keyPath, err))
 			}
 		}
 	}
@@ -445,11 +478,15 @@ func buildSSHConfig(cfg Config) (*ssh.ClientConfig, error) {
 	}
 
 	if len(authMethods) == 0 {
-		return nil, fmt.Errorf("no authentication methods available\n\n" +
-			"Tried default keys: ~/.ssh/id_ed25519, ~/.ssh/id_rsa, ~/.ssh/id_ecdsa\n\n" +
-			"Options:\n" +
+		msg := "no authentication methods available\n\n" +
+			"Tried default keys: ~/.ssh/id_ed25519, ~/.ssh/id_rsa, ~/.ssh/id_ecdsa\n"
+		for _, p := range keyProblems {
+			msg += "  could not load " + p + "\n"
+		}
+		msg += "\nOptions:\n" +
 			"  -k, --key PATH    Specify a private key file\n" +
-			"  -p, --password    Use password authentication")
+			"  -p, --password    Use password authentication"
+		return nil, fmt.Errorf("%s", msg)
 	}
 
 	// Host key verification
@@ -458,7 +495,10 @@ func buildSSHConfig(cfg Config) (*ssh.ClientConfig, error) {
 		hostKeyCallback = ssh.InsecureIgnoreHostKey()
 		fmt.Fprintln(os.Stderr, "Warning: Host key verification disabled")
 	} else if isLoopback(cfg.Host) {
+		// A loopback address is normally a local port-forward whose real
+		// endpoint is elsewhere; say so instead of skipping silently.
 		hostKeyCallback = ssh.InsecureIgnoreHostKey()
+		fmt.Fprintf(os.Stderr, "Warning: host key verification skipped for loopback host %s\n", cfg.Host)
 	} else {
 		// Use known_hosts file for verification
 		home, _ := os.UserHomeDir()

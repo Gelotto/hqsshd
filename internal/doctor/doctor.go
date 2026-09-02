@@ -30,6 +30,7 @@ import (
 	"github.com/gelotto/hqsshd/internal/cli/client"
 	"github.com/gelotto/hqsshd/internal/config"
 	"github.com/gelotto/hqsshd/internal/servicemgr"
+	"github.com/gelotto/hqsshd/internal/tools"
 )
 
 // Status is a check's verdict.
@@ -111,6 +112,15 @@ type Options struct {
 	Runner     servicemgr.Runner
 	Timeout    time.Duration // per external probe
 	LogLines   int           // lines of log tail to capture on failure
+
+	// DetectServices lists installed service definitions (nil =
+	// servicemgr.DetectAll, which reads absolute host paths such as
+	// /Library/LaunchDaemons). Tests inject a stub so the host's real
+	// service never leaks into a hermetic run.
+	DetectServices func() []servicemgr.Service
+	// DetectTools probes AI tools from this shell when the daemon is down
+	// (nil = the daemon's own detector, which spawns login shells).
+	DetectTools func(cfg *config.Config) []string
 }
 
 // defaults fills unset options from the daemon's own configuration, so a
@@ -142,6 +152,12 @@ func (o *Options) defaults(cfg *config.Config) {
 	}
 	if o.LogLines == 0 {
 		o.LogLines = 20
+	}
+	if o.DetectServices == nil {
+		o.DetectServices = servicemgr.DetectAll
+	}
+	if o.DetectTools == nil {
+		o.DetectTools = func(cfg *config.Config) []string { return tools.NewDetector(cfg).DetectAll() }
 	}
 }
 

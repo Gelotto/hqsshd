@@ -17,6 +17,7 @@ package task
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -51,6 +52,46 @@ type Executor struct {
 type runningTask struct {
 	cancel context.CancelFunc
 	cmd    *exec.Cmd
+
+	mu   sync.Mutex
+	pgid int // process group id, published once the process has started
+}
+
+// setPgid records the started process's group id for killGroup.
+func (rt *runningTask) setPgid(pid int) {
+	rt.mu.Lock()
+	rt.pgid = pid
+	rt.mu.Unlock()
+}
+
+// killGroup SIGKILLs the task's process group if it has started. Before
+// Start the context cancellation is the signal; executeTask checks it
+// right after Start.
+func (rt *runningTask) killGroup() {
+	rt.mu.Lock()
+	pgid := rt.pgid
+	rt.mu.Unlock()
+	if pgid > 0 {
+		syscall.Kill(-pgid, syscall.SIGKILL)
+	}
+}
+
+// formatSize renders a byte count for the truncation notice.
+func formatSize(n int64) string {
+	switch {
+	case n >= 1024*1024:
+		return fmt.Sprintf("%dMB", n/(1024*1024))
+	case n >= 1024:
+		return fmt.Sprintf("%dKB", n/1024)
+	default:
+		return fmt.Sprintf("%dB", n)
+	}
+}
+
+// isPtyEOF reports whether a PTY read error just means the child closed
+// its side (EOF on macOS, EIO on Linux).
+func isPtyEOF(err error) bool {
+	return errors.Is(err, io.EOF) || errors.Is(err, syscall.EIO)
 }
 
 // NewExecutor creates a new task executor.
@@ -122,9 +163,7 @@ func (e *Executor) Cancel(runID string) error {
 	// Don't call cmd.Wait() here — the executeTask() goroutine handles it.
 	// Concurrent Wait() on the same exec.Cmd is undefined behavior.
 	rt.cancel()
-	if rt.cmd != nil && rt.cmd.Process != nil {
-		syscall.Kill(-rt.cmd.Process.Pid, syscall.SIGKILL)
-	}
+	rt.killGroup()
 
 	e.runStore.Cancel(runID)
 
@@ -182,12 +221,13 @@ func (e *Executor) executeTask(task *Task, run *Run, projectPath string) {
 	// Build command
 	cmd := e.buildCommand(task, workingDir)
 
-	// Track for cancellation
+	// Track for cancellation. The process group id is published only once
+	// the process exists (below); Cancel/Close read it under rt.mu, so a
+	// cancel that lands during fork/exec relies on ctx and the check after
+	// Start instead of racing cmd.Process.
+	rt := &runningTask{cancel: cancel, cmd: cmd}
 	e.runningMu.Lock()
-	e.running[run.ID] = &runningTask{
-		cancel: cancel,
-		cmd:    cmd,
-	}
+	e.running[run.ID] = rt
 	e.runningMu.Unlock()
 
 	defer func() {
@@ -206,19 +246,17 @@ func (e *Executor) executeTask(task *Task, run *Run, projectPath string) {
 		return
 	}
 	defer ptmx.Close()
-
-	// Write prompt to stdin (for AI tools that read from stdin)
-	if task.Prompt != "" {
-		// Send prompt followed by newline
-		_, err := ptmx.Write([]byte(task.Prompt + "\n"))
-		if err != nil {
-			logging.Warn("failed to write prompt to task", "task_id", task.ID, "error", err)
-		}
-
-		// For non-interactive AI tools, send EOF after prompt
-		// Wait a moment for the tool to read the prompt
-		time.Sleep(100 * time.Millisecond)
+	rt.setPgid(cmd.Process.Pid)
+	if ctx.Err() != nil {
+		// Cancelled while starting: Cancel could not signal a process that
+		// did not exist yet, so do it here.
+		rt.killGroup()
 	}
+
+	// The prompt reaches the tool as $1 (see buildCommand); nothing is
+	// written to the PTY. Writing it to stdin as well echoed it into the
+	// captured output and let stdin-reading commands consume their own
+	// command text.
 
 	// Capture output
 	var outputBuf bytes.Buffer
@@ -232,9 +270,14 @@ func (e *Executor) executeTask(task *Task, run *Run, projectPath string) {
 		if err != nil {
 			logging.Warn("error reading task output", "run_id", run.ID, "error", err)
 		}
-		// If we hit the size limit, notify the user
+		// If we hit the size limit, notify the user and keep draining the
+		// PTY: a child that keeps writing would otherwise block on a full
+		// PTY buffer until the run times out.
 		if n >= e.maxOutputSize {
-			outputBuf.WriteString(fmt.Sprintf("\n[Output truncated at %dMB]", e.maxOutputSize/(1024*1024)))
+			outputBuf.WriteString(fmt.Sprintf("\n[Output truncated at %s]", formatSize(e.maxOutputSize)))
+			if _, err := io.Copy(io.Discard, ptmx); err != nil && !isPtyEOF(err) {
+				logging.Debug("error draining task output", "run_id", run.ID, "error", err)
+			}
 		}
 	}()
 
@@ -352,10 +395,7 @@ func (e *Executor) Close() {
 
 	for runID, rt := range snapshot {
 		rt.cancel()
-		if rt.cmd != nil && rt.cmd.Process != nil {
-			// Kill the entire process group
-			syscall.Kill(-rt.cmd.Process.Pid, syscall.SIGKILL)
-		}
+		rt.killGroup() // the entire process group
 		e.runStore.Cancel(runID)
 	}
 }

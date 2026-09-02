@@ -93,7 +93,8 @@ func TestStore_Update(t *testing.T) {
 
 	time.Sleep(10 * time.Millisecond)
 
-	updated := s.Update(task.ID, "updated name", "new description", "claude", TaskScopeProject, "proj-1", "new prompt", true, 600)
+	name, desc, tool, scope, proj, prompt, inter, to := "updated name", "new description", "claude", TaskScopeProject, "proj-1", "new prompt", true, 600
+	updated := s.Update(task.ID, Patch{Name: &name, Description: &desc, Tool: &tool, Scope: &scope, ProjectID: &proj, Prompt: &prompt, Interactive: &inter, TimeoutSeconds: &to})
 
 	if updated == nil {
 		t.Fatal("Update returned nil")
@@ -130,7 +131,8 @@ func TestStore_Update(t *testing.T) {
 func TestStore_UpdateUnknown(t *testing.T) {
 	s := NewStore(t.TempDir())
 
-	updated := s.Update("unknown-id", "name", "", "shell", TaskScopeSystem, "", "prompt", false, 0)
+	name := "name"
+	updated := s.Update("unknown-id", Patch{Name: &name})
 	if updated != nil {
 		t.Errorf("Update(unknown) = %v, want nil", updated)
 	}

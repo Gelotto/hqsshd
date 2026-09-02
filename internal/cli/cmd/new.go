@@ -37,11 +37,12 @@ var newCmd = &cobra.Command{
 	Short: "Create a new session",
 	Long: `Create a new AI session on the remote system.
 
-By default, creates a shell session and attaches to it immediately.
-Use --tool to specify which AI tool to launch.
+By default, launches the first AI tool the daemon detects and attaches to it
+immediately. Use --tool to choose one; "shell" needs enable_shell_tool: true
+in the daemon's daemon.yaml.
 
 Examples:
-  hqssh new                              # New shell session
+  hqssh new                              # First detected AI tool
   hqssh new --tool claude                # New Claude session
   hqssh new --tool claude --project .    # In current directory
   hqssh new --tool aider --no-attach     # Create but don't attach`,
@@ -49,7 +50,7 @@ Examples:
 }
 
 func init() {
-	newCmd.Flags().StringVarP(&newTool, "tool", "t", "shell", "Tool to launch: claude, codex, aider, shell")
+	newCmd.Flags().StringVarP(&newTool, "tool", "t", "", "Tool to launch: claude, codex, aider, shell (default: first detected)")
 	newCmd.Flags().StringVarP(&newProject, "project", "d", "", "Working directory or project path")
 	newCmd.Flags().BoolVar(&newNoAttach, "no-attach", false, "Create session but don't attach")
 	newCmd.Flags().StringVarP(&newName, "name", "n", "", "Explicit session name (auto-generated if omitted)")
@@ -84,10 +85,15 @@ func runNew(cmd *cobra.Command, args []string) error {
 	// Do NOT resolve locally — "." means the remote CWD, not the local one.
 	workingDir := newProject
 
+	tool, err := resolveTool(ctx, c, newTool)
+	if err != nil {
+		return err
+	}
+
 	// Create the session
-	fmt.Fprintf(os.Stderr, "Creating %s session...\n", newTool)
+	fmt.Fprintf(os.Stderr, "Creating %s session...\n", tool)
 	session, err := c.SessionService.Create(ctx, &pb.CreateSessionRequest{
-		Tool:             newTool,
+		Tool:             tool,
 		WorkingDirectory: workingDir,
 		Cols:             int32(cols),
 		Rows:             int32(rows),

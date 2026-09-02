@@ -36,7 +36,6 @@ import (
 	"github.com/gelotto/hqsshd/internal/pidfile"
 	"github.com/gelotto/hqsshd/internal/procscan"
 	"github.com/gelotto/hqsshd/internal/servicemgr"
-	"github.com/gelotto/hqsshd/internal/tools"
 	pb "github.com/gelotto/hqsshd/proto"
 )
 
@@ -158,7 +157,7 @@ func checkPath(e *env) []Check {
 
 func checkService(e *env) []Check {
 	const name = "service"
-	e.services = servicemgr.DetectAll()
+	e.services = e.opts.DetectServices()
 	if len(e.services) == 0 {
 		return []Check{warn(name, "no background service installed",
 			"run the daemon by hand with `hqsshd`, or install the service: "+servicemgr.InstallCommand)}
@@ -176,7 +175,10 @@ func checkService(e *env) []Check {
 	defer cancel()
 	info, err := svc.Status(ctx, e.opts.Runner)
 	if err != nil {
-		return append(checks, fail(name, svc.String()+": "+err.Error(), "hqssh service status"))
+		// The service manager could not be queried (launchctl/systemctl
+		// missing or failing): unknown state, not "not loaded".
+		return append(checks, warn(name, "could not query "+svc.String()+": "+err.Error(),
+			"run by hand: "+svc.StatusCommand()))
 	}
 	e.svcStatus = &info
 
@@ -543,7 +545,7 @@ func checkLog(e *env) []Check {
 		e.logTail = tailLines(out, e.opts.LogLines)
 		return []Check{pass(name, e.logPath+" ("+countErrors(e.logTail)+")")}
 	} else {
-		e.logPath = servicemgr.DefaultLogFile()
+		e.logPath = servicemgr.LogFileFor(e.service)
 	}
 
 	data, info, err := readTail(e.logPath, 64*1024)
@@ -692,7 +694,7 @@ func checkTools(e *env) []Check {
 	}
 	// Daemon down: run the daemon's own detector (same Detect commands,
 	// login-shell fallback and timeouts) from this shell.
-	found := tools.NewDetector(cfg).DetectAll()
+	found := e.opts.DetectTools(cfg)
 	if len(found) == 0 {
 		return []Check{warn(name, "none of the configured AI tools ("+strings.Join(configured, ", ")+") detected from this shell (daemon not running; its own environment may differ)", "")}
 	}

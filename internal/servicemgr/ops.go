@@ -51,7 +51,10 @@ func (s Service) Status(ctx context.Context, r Runner) (StatusInfo, error) {
 	info := StatusInfo{Service: s, Domain: s.Domain}
 	switch s.Kind {
 	case KindLaunchd:
-		st, domain := s.LaunchdStatus(ctx, r)
+		st, domain, err := s.LaunchdStatusErr(ctx, r)
+		if err != nil {
+			return info, err
+		}
 		info.Launchd = &st
 		info.Domain = domain
 		info.Loaded = st.Loaded
@@ -66,7 +69,10 @@ func (s Service) Status(ctx context.Context, r Runner) (StatusInfo, error) {
 		}
 		return info, nil
 	case KindSystemd:
-		st := s.SystemdStatus(ctx, r)
+		st, err := s.systemdStatusErr(ctx, r)
+		if err != nil {
+			return info, err
+		}
 		info.Systemd = &st
 		info.Loaded = st.Installed()
 		info.Running = st.Running()
@@ -255,7 +261,7 @@ func (s Service) bootstrapInto(ctx context.Context, r Runner, domain string) err
 		case 125: // Domain does not support specified action / not found
 			return err
 		case 5: // Input/output error: already bootstrapped — or a plist launchd refuses
-			if st := s.launchctlPrint(ctx, r, domain+"/"+s.Label); st.Loaded {
+			if st, _ := s.launchctlPrint(ctx, r, domain+"/"+s.Label); st.Loaded {
 				return nil
 			}
 			return fmt.Errorf("%w\nlaunchd rejected the job: check `plutil -lint %s` and that the program it points to is executable", err, s.UnitPath)
@@ -343,6 +349,6 @@ func (s Service) LogsCommandArgs(follow bool, lines int) (string, []string) {
 		if follow {
 			args = append(args, "-f")
 		}
-		return "tail", append(args, DefaultLogFile())
+		return "tail", append(args, LogFile(s.Scope))
 	}
 }

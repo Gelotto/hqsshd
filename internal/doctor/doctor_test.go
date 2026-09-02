@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gelotto/hqsshd/internal/config"
 	"github.com/gelotto/hqsshd/internal/servicemgr"
 )
 
@@ -109,7 +110,12 @@ func TestRunWithoutDaemon(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	report := Run(ctx, Options{SocketPath: sock, TCPAddr: "127.0.0.1:1", Runner: r, Timeout: time.Second})
+	// Hermetic: the host's real /Library/LaunchDaemons plist must not leak
+	// in, and no login shells are spawned to look for AI tools.
+	report := Run(ctx, Options{SocketPath: sock, TCPAddr: "127.0.0.1:1", Runner: r, Timeout: time.Second,
+		DetectServices: func() []servicemgr.Service { return nil },
+		DetectTools:    func(*config.Config) []string { return nil },
+	})
 
 	if !report.Failed() {
 		t.Fatal("report should fail with no daemon")

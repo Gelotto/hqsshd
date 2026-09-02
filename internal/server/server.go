@@ -180,6 +180,17 @@ func (s *Server) isValidTool(tool string) bool {
 	return false
 }
 
+// invalidToolError explains why a tool name was refused. "shell" is a
+// built-in that is off by default, and the fix is a config key the caller
+// cannot discover from "unknown tool".
+func (s *Server) invalidToolError(tool string) error {
+	if tool == "shell" && !s.config.EnableShellTool && config.ValidateToolName(tool) {
+		return status.Error(codes.InvalidArgument,
+			`tool "shell" is disabled: set enable_shell_tool: true in ~/.hqssh/daemon.yaml and restart the daemon`)
+	}
+	return status.Errorf(codes.InvalidArgument, "unknown tool: %q", tool)
+}
+
 // authUnaryInterceptor validates the auth token on unary RPCs.
 func (s *Server) authUnaryInterceptor(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 	if err := s.validateAuth(ctx); err != nil {
@@ -244,6 +255,7 @@ func (s *systemService) GetInfo(ctx context.Context, _ *pb.Empty) (*pb.SystemInf
 		DaemonVersion:  config.DaemonVersion,
 		InstalledTools: installedTools,
 		Commit:         config.Commit,
+		ShellEnabled:   s.server.config.EnableShellTool,
 	}, nil
 }
 
@@ -323,13 +335,25 @@ func (s *projectService) List(ctx context.Context, req *pb.ListProjectsRequest) 
 }
 
 func (s *projectService) Add(ctx context.Context, req *pb.AddProjectRequest) (*pb.Project, error) {
-	if req.GetPath() == "" {
+	path := req.GetPath()
+	if path == "" {
 		return nil, status.Error(codes.InvalidArgument, "path is required")
 	}
+	// A relative path would be resolved against the daemon's working
+	// directory, which means nothing to a remote client.
+	if !filepath.IsAbs(path) && !strings.HasPrefix(path, "~") {
+		return nil, status.Errorf(codes.InvalidArgument, "path must be absolute: %q", path)
+	}
 
-	proj, err := s.server.discovery.CreateFromPath(req.GetPath(), req.GetName())
+	proj, err := s.server.discovery.CreateFromPath(path, req.GetName())
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid path: %v", err)
+	}
+
+	// Re-adding a registered directory is a no-op that keeps the existing
+	// record (favourite flag, last-accessed time) instead of replacing it.
+	if existing := s.server.registry.Get(proj.ID); existing != nil {
+		return projectToProto(existing), nil
 	}
 
 	// An explicit add overrides a previous removal
@@ -422,6 +446,9 @@ func (s *projectService) GetTools(ctx context.Context, req *pb.GetToolsRequest) 
 // SessionService Implementation
 // ============================================================================
 
+// replayChunkSize bounds each scrollback replay message sent by Attach.
+const replayChunkSize = 1 << 20
+
 type sessionService struct {
 	pb.UnimplementedSessionServiceServer
 	server *Server
@@ -439,7 +466,7 @@ func (s *sessionService) Create(ctx context.Context, req *pb.CreateSessionReques
 		return nil, status.Error(codes.InvalidArgument, "tool is required")
 	}
 	if !s.server.isValidTool(tool) {
-		return nil, status.Errorf(codes.InvalidArgument, "unknown tool: %q", tool)
+		return nil, s.server.invalidToolError(tool)
 	}
 
 	// Determine working directory
@@ -464,9 +491,14 @@ func (s *sessionService) Create(ctx context.Context, req *pb.CreateSessionReques
 		workingDir = homeDir
 	}
 
-	// Validate working directory exists
-	if _, err := os.Stat(workingDir); os.IsNotExist(err) {
-		return nil, status.Errorf(codes.InvalidArgument, "working directory does not exist: %s", workingDir)
+	// Validate working directory exists and is a directory
+	if fi, err := os.Stat(workingDir); err != nil {
+		if os.IsNotExist(err) {
+			return nil, status.Errorf(codes.InvalidArgument, "working directory does not exist: %s", workingDir)
+		}
+		return nil, status.Errorf(codes.InvalidArgument, "working directory is not accessible: %v", err)
+	} else if !fi.IsDir() {
+		return nil, status.Errorf(codes.InvalidArgument, "working directory is not a directory: %s", workingDir)
 	}
 
 	// Default terminal size with upper bounds
@@ -547,9 +579,16 @@ func (s *sessionService) Attach(req *pb.AttachRequest, stream pb.SessionService_
 		s.server.sessionManager.Detach(sessionID, clientID)
 	}()
 
-	// Send scrollback first (history catch-up)
-	if len(scrollback) > 0 {
-		if err := stream.Send(&pb.TerminalOutput{Data: scrollback}); err != nil {
+	// Send scrollback first (history catch-up). The replay is chunked: a
+	// long session's scrollback (default cap 10 MB) sent as one message
+	// exceeds grpc-go's default 4 MiB client receive limit and the CLI
+	// could never attach to it. Clients concatenate in order.
+	for off := 0; off < len(scrollback); off += replayChunkSize {
+		end := off + replayChunkSize
+		if end > len(scrollback) {
+			end = len(scrollback)
+		}
+		if err := stream.Send(&pb.TerminalOutput{Data: scrollback[off:end]}); err != nil {
 			return status.Errorf(codes.Internal, "failed to send scrollback: %v", err)
 		}
 	}
@@ -590,6 +629,24 @@ func (s *sessionService) Attach(req *pb.AttachRequest, stream pb.SessionService_
 		sess.SignalRepaint()
 	}
 
+	// deliver forwards one queued item (data chunk or in-band gap marker).
+	deliver := func(data []byte) error {
+		if len(data) == 0 {
+			// In-band gap marker (session.gapMarker): output before this
+			// point was dropped for us.
+			return sendGap()
+		}
+		if err := stream.Send(&pb.TerminalOutput{Data: data}); err != nil {
+			return status.Errorf(codes.Internal, "failed to send output: %v", err)
+		}
+		// A drop at the tail of a burst has no later chunk to carry its
+		// marker; surface it now that the queue is empty.
+		if len(outputCh) == 0 && sess.TakeOutputGap(clientID) {
+			return sendGap()
+		}
+		return nil
+	}
+
 	for {
 		select {
 		case data, ok := <-outputCh:
@@ -597,30 +654,30 @@ func (s *sessionService) Attach(req *pb.AttachRequest, stream pb.SessionService_
 				// Channel closed - session ended
 				return nil
 			}
-			if len(data) == 0 {
-				// In-band gap marker (session.gapMarker): output before this
-				// point was dropped for us.
-				if err := sendGap(); err != nil {
-					return err
-				}
-				repaintIfDrained()
-				continue
-			}
-			if err := stream.Send(&pb.TerminalOutput{Data: data}); err != nil {
-				return status.Errorf(codes.Internal, "failed to send output: %v", err)
-			}
-			// A drop at the tail of a burst has no later chunk to carry its
-			// marker; surface it now that the queue is empty.
-			if len(outputCh) == 0 && sess.TakeOutputGap(clientID) {
-				if err := sendGap(); err != nil {
-					return err
-				}
+			if err := deliver(data); err != nil {
+				return err
 			}
 			repaintIfDrained()
 
 		case <-sess.Done():
-			// Session ended
-			return nil
+			// The session ended. Its final chunks are usually still queued
+			// for us: the reader broadcasts the last output and then closes
+			// done, and select picks between the two ready cases at random.
+			// Nothing is broadcast after done closes, so a non-blocking
+			// drain delivers everything that was written.
+			for {
+				select {
+				case data, ok := <-outputCh:
+					if !ok {
+						return nil
+					}
+					if err := deliver(data); err != nil {
+						return err
+					}
+				default:
+					return nil
+				}
+			}
 
 		case <-stream.Context().Done():
 			// Client disconnected
@@ -830,20 +887,10 @@ func (s *sessionService) ListHistoricalSessions(ctx context.Context, req *pb.Lis
 	store := s.server.sessionManager.GetStore()
 	logDir := s.server.sessionManager.GetLogDir()
 
-	// Get ended sessions from store
-	records := store.ListEnded(limit)
-
-	// Filter by project if specified
-	projectID := req.GetProjectId()
-	if projectID != "" {
-		filtered := make([]*session.SessionRecord, 0)
-		for _, r := range records {
-			if r.ProjectID == projectID {
-				filtered = append(filtered, r)
-			}
-		}
-		records = filtered
-	}
+	// Get ended sessions from store, filtered by project before the limit
+	// is applied (otherwise newer sessions of other projects crowd out the
+	// requested project's history).
+	records := store.ListEndedForProject(req.GetProjectId(), limit)
 
 	// Convert to proto
 	pbSessions := make([]*pb.Session, len(records))
@@ -1062,7 +1109,7 @@ func (s *taskService) Create(ctx context.Context, req *pb.CreateTaskRequest) (*p
 		return nil, status.Error(codes.InvalidArgument, "tool is required")
 	}
 	if !s.server.isValidTool(tool) {
-		return nil, status.Errorf(codes.InvalidArgument, "unknown tool: %q", tool)
+		return nil, s.server.invalidToolError(tool)
 	}
 
 	scope := protoToTaskScope(req.GetScope())
@@ -1120,38 +1167,76 @@ func (s *taskService) Update(ctx context.Context, req *pb.UpdateTaskRequest) (*p
 		return nil, status.Error(codes.NotFound, "task not found")
 	}
 
-	// Validate tool if being updated
-	if tool := req.GetTool(); tool != "" && !s.server.isValidTool(tool) {
-		return nil, status.Errorf(codes.InvalidArgument, "unknown tool: %q", tool)
+	// Update merges: only fields present in the request change (proto3
+	// field presence). A present-but-empty string clears a text field.
+	patch := task.Patch{}
+	if req.Name != nil {
+		if req.GetName() == "" {
+			return nil, status.Error(codes.InvalidArgument, "name cannot be empty")
+		}
+		patch.Name = req.Name
+	}
+	if req.Description != nil {
+		patch.Description = req.Description
+	}
+	if req.Tool != nil {
+		tool := req.GetTool()
+		if tool == "" {
+			return nil, status.Error(codes.InvalidArgument, "tool cannot be empty")
+		}
+		if !s.server.isValidTool(tool) {
+			return nil, s.server.invalidToolError(tool)
+		}
+		patch.Tool = req.Tool
+	}
+	if req.Prompt != nil {
+		patch.Prompt = req.Prompt
+	}
+	if req.Interactive != nil {
+		if req.GetInteractive() {
+			return nil, status.Error(codes.Unimplemented, "interactive tasks not yet supported")
+		}
+		patch.Interactive = req.Interactive
+	}
+	if req.TimeoutSeconds != nil {
+		if req.GetTimeoutSeconds() < 0 {
+			return nil, status.Error(codes.InvalidArgument, "timeout_seconds cannot be negative")
+		}
+		t := int(req.GetTimeoutSeconds())
+		patch.TimeoutSeconds = &t
 	}
 
-	scope := protoToTaskScope(req.GetScope())
-	if scope == task.TaskScopeUnspecified {
-		scope = existing.Scope // Keep existing scope if not specified
+	scope := existing.Scope
+	if req.Scope != nil {
+		scope = protoToTaskScope(req.GetScope())
+		if scope == task.TaskScopeUnspecified {
+			return nil, status.Error(codes.InvalidArgument, "scope is invalid")
+		}
+		if scope == task.TaskScopeGlobal {
+			return nil, status.Error(codes.Unimplemented, "global tasks not yet supported")
+		}
+		patch.Scope = &scope
 	}
 
-	// Global scope not supported
-	if scope == task.TaskScopeGlobal {
-		return nil, status.Error(codes.Unimplemented, "global tasks not yet supported")
+	projectID := existing.ProjectID
+	if req.ProjectId != nil {
+		projectID = req.GetProjectId()
+		patch.ProjectID = req.ProjectId
+	}
+	if scope == task.TaskScopeProject {
+		if projectID == "" {
+			return nil, status.Error(codes.InvalidArgument, "project_id is required for project scope")
+		}
+		if s.server.registry.Get(projectID) == nil {
+			return nil, status.Error(codes.NotFound, "project not found")
+		}
+	} else if projectID != "" {
+		// A system-scoped task carries no project
+		empty := ""
+		patch.ProjectID = &empty
 	}
 
-	// Interactive not supported
-	if req.GetInteractive() {
-		return nil, status.Error(codes.Unimplemented, "interactive tasks not yet supported")
-	}
-
-	t := s.server.taskStore.Update(
-		id,
-		req.GetName(),
-		req.GetDescription(),
-		req.GetTool(),
-		scope,
-		req.GetProjectId(),
-		req.GetPrompt(),
-		req.GetInteractive(),
-		int(req.GetTimeoutSeconds()),
-	)
-
+	t := s.server.taskStore.Update(id, patch)
 	if t == nil {
 		return nil, status.Error(codes.NotFound, "task not found")
 	}
