@@ -342,8 +342,8 @@ func (s *projectService) Add(ctx context.Context, req *pb.AddProjectRequest) (*p
 	}
 	// A relative path would be resolved against the daemon's working
 	// directory, which means nothing to a remote client.
-	if !filepath.IsAbs(path) && !strings.HasPrefix(path, "~") {
-		return nil, status.Errorf(codes.InvalidArgument, "path must be absolute: %q", path)
+	if !filepath.IsAbs(path) && path != "~" && !strings.HasPrefix(path, "~/") {
+		return nil, status.Errorf(codes.InvalidArgument, "path must be absolute (or start with ~/): %q", path)
 	}
 
 	proj, err := s.server.discovery.CreateFromPath(path, req.GetName())
@@ -589,7 +589,7 @@ func (s *sessionService) Attach(req *pb.AttachRequest, stream pb.SessionService_
 		if end > len(scrollback) {
 			end = len(scrollback)
 		}
-		if err := stream.Send(&pb.TerminalOutput{Data: scrollback[off:end]}); err != nil {
+		if err := stream.Send(&pb.TerminalOutput{Data: scrollback[off:end], Replay: true}); err != nil {
 			return status.Errorf(codes.Internal, "failed to send scrollback: %v", err)
 		}
 	}
@@ -665,7 +665,10 @@ func (s *sessionService) Attach(req *pb.AttachRequest, stream pb.SessionService_
 			// for us: the reader broadcasts the last output and then closes
 			// done, and select picks between the two ready cases at random.
 			// Nothing is broadcast after done closes, so a non-blocking
-			// drain delivers everything that was written.
+			// drain delivers everything that was written. (A client whose
+			// queue was full when the process exited has already lost that
+			// tail to the bounded-wait drop policy; it gets the gap marker
+			// and can fetch GetScrollback / the session log.)
 			for {
 				select {
 				case data, ok := <-outputCh:
@@ -1231,8 +1234,10 @@ func (s *taskService) Update(ctx context.Context, req *pb.UpdateTaskRequest) (*p
 		if s.server.registry.Get(projectID) == nil {
 			return nil, status.Error(codes.NotFound, "project not found")
 		}
+	} else if req.ProjectId != nil && projectID != "" {
+		return nil, status.Error(codes.InvalidArgument, "project_id only applies to project scope")
 	} else if projectID != "" {
-		// A system-scoped task carries no project
+		// Scope changed to SYSTEM: the task carries no project any more
 		empty := ""
 		patch.ProjectID = &empty
 	}

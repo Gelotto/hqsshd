@@ -74,7 +74,7 @@ var gapMarker = []byte{}
 // Session represents a persistent PTY session running an AI tool
 type Session struct {
 	ID               string
-	Name             string   // Human-readable name (e.g., "myapp/claude-a1b2")
+	Name             string // Human-readable name (e.g., "myapp/claude-a1b2")
 	ProjectID        string
 	Tool             string   // 'claude', 'codex', 'aider', 'shell'
 	Args             []string // Additional arguments for the tool
@@ -466,8 +466,11 @@ func (s *Session) broadcast(data []byte) {
 			// too (it must not overtake the marker) and the flag stays set
 			// so the consumer picks the marker up after draining
 			// (TakeOutputGap).
+			// One bounded wait covers marker and data together, so a stalled
+			// client never holds the reader longer than clientSendTimeout.
+			deadline := time.Now().Add(clientSendTimeout)
 			if cs.gapPending.Load() {
-				if !sendBounded(cs.ch, gapMarker) {
+				if !sendBoundedUntil(cs.ch, gapMarker, deadline) {
 					cs.dropCount++
 					cs.lastDropTime = time.Now()
 					return
@@ -475,7 +478,7 @@ func (s *Session) broadcast(data []byte) {
 				cs.gapPending.Store(false)
 			}
 
-			if sendBounded(cs.ch, data) {
+			if sendBoundedUntil(cs.ch, data, deadline) {
 				return
 			}
 
@@ -494,16 +497,21 @@ func (s *Session) broadcast(data []byte) {
 	}
 }
 
-// sendBounded queues item for a client: fast path when there is room,
-// otherwise a bounded wait for the consumer (a slow link is the normal
-// reason). Returns false when the item could not be queued in time.
-func sendBounded(ch chan<- []byte, item []byte) bool {
+// sendBoundedUntil queues item for a client: fast path when there is
+// room, otherwise a wait until deadline for the consumer (a slow link is
+// the normal reason). Returns false when the item could not be queued in
+// time.
+func sendBoundedUntil(ch chan<- []byte, item []byte, deadline time.Time) bool {
 	select {
 	case ch <- item:
 		return true
 	default:
 	}
-	timer := time.NewTimer(clientSendTimeout)
+	wait := time.Until(deadline)
+	if wait <= 0 {
+		return false
+	}
+	timer := time.NewTimer(wait)
 	defer timer.Stop()
 	select {
 	case ch <- item:

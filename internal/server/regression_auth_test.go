@@ -1,6 +1,6 @@
 package server
 
-// Review-only tests (not part of the repo): gRPC auth interceptor coverage,
+// Regression tests from the September 2026 review: gRPC auth interceptor coverage,
 // TaskService.Update semantics, ProjectService.Add path handling.
 
 import (
@@ -154,7 +154,7 @@ func TestNoAuthWhenTokenUnset(t *testing.T) {
 
 // TaskService.Update replaces every field with the request's value, so a
 // partial update (only name) wipes tool/prompt/timeout/project.
-func TestTaskUpdatePartialWipesFields(t *testing.T) {
+func TestTaskUpdateMergesByPresence(t *testing.T) {
 	srv, _ := startAuthServer(t, "", false)
 	ts := &taskService{server: srv}
 	ctx := context.Background()

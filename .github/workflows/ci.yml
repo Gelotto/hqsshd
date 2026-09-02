@@ -161,6 +161,7 @@ jobs:
           test ! -e ~/Library/LaunchAgents/com.gelotto.hqsshd.plist
           test ! -e /Library/LaunchDaemons/com.gelotto.hqsshd.plist
           test ! -e ~/.config/systemd/user/hqsshd.service
+          test ! -e /Library/Logs/hqsshd
           test ! -S /tmp/hqssh.sock
           test ! -x "$HQSSH_INSTALL_DIR/hqsshd"
 
@@ -168,6 +169,7 @@ jobs:
         if: failure()
         run: |
           echo "--- ~/.hqssh/logs/hqsshd.log"; tail -n 100 ~/.hqssh/logs/hqsshd.log 2>/dev/null || true
+          echo "--- /Library/Logs/hqsshd/hqsshd.log"; tail -n 100 /Library/Logs/hqsshd/hqsshd.log 2>/dev/null || true
           echo "--- journalctl"; journalctl --user -u hqsshd -n 100 --no-pager 2>/dev/null || true
           echo "--- launchctl print"; launchctl print "gui/$(id -u)/com.gelotto.hqsshd" 2>/dev/null || launchctl print system/com.gelotto.hqsshd 2>/dev/null || true
           echo "--- hand-started daemon"; cat "$RUNNER_TEMP/hqsshd.out" 2>/dev/null || true

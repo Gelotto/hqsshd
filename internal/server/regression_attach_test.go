@@ -33,7 +33,7 @@ func (s *slowAttachStream) Send(m *pb.TerminalOutput) error {
 // attached client: the reader broadcasts them and then closes Done, and
 // Attach's select used to pick Done at random and return with output still
 // queued. The tail (TAIL-MARK) must reach the client.
-func TestAttachDropsQueuedOutputWhenSessionEnds(t *testing.T) {
+func TestAttachDeliversTailWhenSessionEnds(t *testing.T) {
 	if testing.Short() {
 		t.Skip("spawns a shell")
 	}
@@ -97,7 +97,7 @@ func TestAttachDropsQueuedOutputWhenSessionEnds(t *testing.T) {
 // Attach used to send the whole scrollback (up to max_scrollback_size =
 // 10MB) as a single message, which a grpc-go client with default options
 // (4 MiB) refuses. The replay is now chunked.
-func TestAttachScrollbackOver4MBRejectedByDefaultClient(t *testing.T) {
+func TestAttachReplayChunkedForDefaultClient(t *testing.T) {
 	if testing.Short() {
 		t.Skip("spawns a shell and pumps 5MB through the PTY")
 	}
@@ -213,7 +213,7 @@ func TestGetSessionLogPathTraversal(t *testing.T) {
 
 // The limit is applied by store.ListEnded before the project filter, so a
 // project-scoped query can return fewer records than exist for it.
-func TestListHistoricalSessionsLimitBeforeProjectFilter(t *testing.T) {
+func TestListHistoricalSessionsFiltersBeforeLimit(t *testing.T) {
 	srv, _ := newTestServer(t, t.TempDir())
 	st := srv.sessionManager.GetStore()
 	base := time.Now().Add(-time.Hour)

@@ -221,6 +221,11 @@ message TerminalOutput {
   // client should resync its escape parser; the daemon asks the process to
   // repaint once the client's backlog has drained.
   bool output_gap = 2;
+  // This message is part of the scrollback replay sent at attach time (the
+  // replay is chunked). Clients must not treat replayed bells/OSC 9 as new
+  // attention events. Absent on daemons before 1.5, which sent the whole
+  // replay as the first message.
+  bool replay = 3;
 }
 
 message TerminalInput {

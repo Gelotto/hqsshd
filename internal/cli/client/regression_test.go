@@ -1,10 +1,11 @@
 package client
 
-// Review-only tests (not part of the repo).
+// Regression tests from the September 2026 review.
 
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -19,7 +20,7 @@ import (
 // A passphrase-protected key given with -k, when the passphrase cannot be
 // read (stdin is not a TTY under tests), is silently dropped and the user
 // is told "no authentication methods available ... Tried default keys".
-func TestPassphraseKeyErrorIsSwallowed(t *testing.T) {
+func TestExplicitKeyLoadErrorIsReported(t *testing.T) {
 	dir := t.TempDir()
 	key := filepath.Join(dir, "id_ed25519")
 	cmd := exec.Command("ssh-keygen", "-q", "-t", "ed25519", "-N", "hunter2", "-f", key)
@@ -81,11 +82,29 @@ func TestHashedKnownHostsAndChangedKey(t *testing.T) {
 }
 
 // Loopback hosts skip host-key verification without any warning.
-func TestLoopbackSkipsHostKeyCheck(t *testing.T) {
+func TestLoopbackSkipsHostKeyCheckWithWarning(t *testing.T) {
 	for _, h := range []string{"localhost", "127.0.0.1", "::1"} {
 		if !isLoopback(h) {
 			t.Errorf("%s not loopback", h)
 		}
 	}
-	t.Logf("note: -H localhost/127.0.0.1 uses ssh.InsecureIgnoreHostKey() with no warning (client.go buildSSHConfig)")
+
+	// A loopback host is normally a local port-forward whose real endpoint
+	// is elsewhere: verification is skipped, but the user must be told.
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved := os.Stderr
+	os.Stderr = w
+	_, cfgErr := buildSSHConfig(Config{Host: "127.0.0.1", Port: 2222, User: "u", Password: "pw"})
+	os.Stderr = saved
+	w.Close()
+	out, _ := io.ReadAll(r)
+	if cfgErr != nil {
+		t.Fatalf("buildSSHConfig: %v", cfgErr)
+	}
+	if !strings.Contains(string(out), "host key verification skipped for loopback host 127.0.0.1") {
+		t.Errorf("no loopback warning on stderr; got %q", out)
+	}
 }

@@ -15,7 +15,7 @@ import (
 
 // history_size (the only scrollback knob documented in README) must size
 // the buffer; DefaultConfig's max_scrollback_size=10MB silently wins.
-func TestHistorySizeIgnoredBecauseDefaultMaxScrollbackWins(t *testing.T) {
+func TestHistorySizeDerivesBufferWhenMaxScrollbackAbsent(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "daemon.yaml")
 	if err := os.WriteFile(cfgPath, []byte("sessions:\n  history_size: 10\n"), 0600); err != nil {
@@ -39,7 +39,7 @@ func TestHistorySizeIgnoredBecauseDefaultMaxScrollbackWins(t *testing.T) {
 // max_sessions is enforced against len(map), which still contains sessions
 // whose process has exited until the 1-minute cleanup tick; Count() (what
 // GetStatus reports as active_sessions) excludes them.
-func TestMaxSessionsCountsExitedSessionsUntilCleanup(t *testing.T) {
+func TestMaxSessionsCountsLiveSessionsOnly(t *testing.T) {
 	m := NewManager(3600, 2, 10000, t.TempDir(), "", 0, 0, 0)
 	defer m.Close()
 
@@ -62,7 +62,7 @@ func TestMaxSessionsCountsExitedSessionsUntilCleanup(t *testing.T) {
 
 // sessions.json is the daemon's own 0600 file, but a null element makes
 // Load nil-deref instead of returning an error.
-func TestStoreLoadNullRecordPanics(t *testing.T) {
+func TestStoreLoadSkipsNullRecords(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, sessionsFile), []byte(`[null]`), 0600); err != nil {
 		t.Fatal(err)
@@ -101,11 +101,12 @@ func TestRestartMarksRunningRecordsEndedNoReattach(t *testing.T) {
 	t.Logf("confirmed: pre-restart running record -> %q, Attach error: not found (no re-attach after restart)", rec.Status)
 }
 
-// Gap marker placement: the marker is only tried non-blockingly, while the
-// data chunk gets a bounded wait. If the consumer frees a slot during that
-// wait the chunk lands BEFORE the marker, so the client resets its parser
+// Gap marker placement: after a drop, the marker must precede every later
+// chunk. Marker and data share one bounded wait; if the consumer frees a
+// slot during it, the marker takes it first (the data chunk is dropped if
+// no second slot appears in time) so the client never resets its parser
 // one chunk too late.
-func TestGapMarkerCanLandAfterPostGapChunk(t *testing.T) {
+func TestGapMarkerPrecedesLaterChunks(t *testing.T) {
 	sess := NewSession("", "shell", "", "t", nil, 80, 24, 0)
 	ch := sess.AddClient("c", 2)
 
@@ -158,7 +159,7 @@ func indexOf(s []string, v string) int {
 // Close() on a session whose process already exited (the normal cleanup
 // path for every naturally-ended session) escalates SIGTERM->SIGKILL->
 // os.Process.Kill on a reaped pid and logs an ERROR.
-func TestCloseAfterNaturalExitLogsError(t *testing.T) {
+func TestCloseAfterNaturalExitIsQuiet(t *testing.T) {
 	if testing.Short() {
 		t.Skip("spawns a shell")
 	}

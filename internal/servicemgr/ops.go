@@ -163,7 +163,10 @@ func (s Service) Start(ctx context.Context, r Runner) error {
 func (s Service) Stop(ctx context.Context, r Runner) error {
 	switch s.Kind {
 	case KindLaunchd:
-		st, domain := s.LaunchdStatus(ctx, r)
+		st, domain, err := s.LaunchdStatusErr(ctx, r)
+		if err != nil {
+			return err
+		}
 		if !st.Loaded {
 			return nil
 		}

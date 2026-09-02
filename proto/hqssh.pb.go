@@ -1291,7 +1291,12 @@ type TerminalOutput struct {
 	// its queue full past the daemon's bounded wait). data is empty. The
 	// client should resync its escape parser; the daemon asks the process to
 	// repaint once the client's backlog has drained.
-	OutputGap     bool `protobuf:"varint,2,opt,name=output_gap,json=outputGap,proto3" json:"output_gap,omitempty"`
+	OutputGap bool `protobuf:"varint,2,opt,name=output_gap,json=outputGap,proto3" json:"output_gap,omitempty"`
+	// This message is part of the scrollback replay sent at attach time (the
+	// replay is chunked). Clients must not treat replayed bells/OSC 9 as new
+	// attention events. Absent on daemons before 1.5, which sent the whole
+	// replay as the first message.
+	Replay        bool `protobuf:"varint,3,opt,name=replay,proto3" json:"replay,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1336,6 +1341,13 @@ func (x *TerminalOutput) GetData() []byte {
 func (x *TerminalOutput) GetOutputGap() bool {
 	if x != nil {
 		return x.OutputGap
+	}
+	return false
+}
+
+func (x *TerminalOutput) GetReplay() bool {
+	if x != nil {
+		return x.Replay
 	}
 	return false
 }
@@ -3215,11 +3227,12 @@ const file_proto_hqssh_proto_rawDesc = "" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x12\n" +
 	"\x04cols\x18\x02 \x01(\x05R\x04cols\x12\x12\n" +
-	"\x04rows\x18\x03 \x01(\x05R\x04rows\"C\n" +
+	"\x04rows\x18\x03 \x01(\x05R\x04rows\"[\n" +
 	"\x0eTerminalOutput\x12\x12\n" +
 	"\x04data\x18\x01 \x01(\fR\x04data\x12\x1d\n" +
 	"\n" +
-	"output_gap\x18\x02 \x01(\bR\toutputGap\"B\n" +
+	"output_gap\x18\x02 \x01(\bR\toutputGap\x12\x16\n" +
+	"\x06replay\x18\x03 \x01(\bR\x06replay\"B\n" +
 	"\rTerminalInput\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x12\n" +

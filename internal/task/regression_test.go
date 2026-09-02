@@ -1,6 +1,6 @@
 package task
 
-// Review-only tests (not part of the repo).
+// Regression tests from the September 2026 review.
 
 import (
 	"os"
@@ -26,7 +26,7 @@ func waitRun(t *testing.T, rs *RunStore, id string, timeout time.Duration) *Run 
 // The prompt is passed as $1 AND written to the task's PTY stdin
 // (executor.go "Write prompt to stdin"). A shell task that reads stdin
 // therefore consumes its own command text.
-func TestPromptIsAlsoFedToStdin(t *testing.T) {
+func TestPromptNotWrittenToPty(t *testing.T) {
 	dir := t.TempDir()
 	ts := NewStore(dir)
 	rs := NewRunStore(dir, 0)
@@ -47,7 +47,7 @@ func TestPromptIsAlsoFedToStdin(t *testing.T) {
 
 // Output beyond max_output_size is never drained: the child blocks on a
 // full PTY and the run only ends at the timeout.
-func TestOutputOverLimitBlocksUntilTimeout(t *testing.T) {
+func TestOutputOverLimitIsDrained(t *testing.T) {
 	dir := t.TempDir()
 	ts := NewStore(dir)
 	rs := NewRunStore(dir, 0)

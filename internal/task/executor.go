@@ -51,7 +51,6 @@ type Executor struct {
 
 type runningTask struct {
 	cancel context.CancelFunc
-	cmd    *exec.Cmd
 
 	mu   sync.Mutex
 	pgid int // process group id, published once the process has started
@@ -225,7 +224,7 @@ func (e *Executor) executeTask(task *Task, run *Run, projectPath string) {
 	// the process exists (below); Cancel/Close read it under rt.mu, so a
 	// cancel that lands during fork/exec relies on ctx and the check after
 	// Start instead of racing cmd.Process.
-	rt := &runningTask{cancel: cancel, cmd: cmd}
+	rt := &runningTask{cancel: cancel}
 	e.runningMu.Lock()
 	e.running[run.ID] = rt
 	e.runningMu.Unlock()
@@ -293,6 +292,17 @@ func (e *Executor) executeTask(task *Task, run *Run, projectPath string) {
 		<-outputDone // Wait for output to be captured
 
 		output := outputBuf.String()
+		if ctx.Err() != nil {
+			// Cancel/timeout killed the group and the exit raced the
+			// select: the verdict is the cancellation, not "signal: killed".
+			e.runStore.SetOutput(run.ID, output)
+			if ctx.Err() == context.DeadlineExceeded {
+				e.runStore.Fail(run.ID, fmt.Sprintf("task timed out after %d seconds", effectiveTimeout))
+			} else {
+				e.runStore.Cancel(run.ID)
+			}
+			break
+		}
 		if err != nil {
 			e.runStore.Fail(run.ID, fmt.Sprintf("command failed: %v", err))
 			e.runStore.SetOutput(run.ID, output)

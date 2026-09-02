@@ -649,14 +649,17 @@ systemd_env() {
 # ---------------------------------------------------------------------------
 
 install_binaries() {
-    mkdir -p "$INSTALL_DIR"
+    # The install dir and the binaries are the one thing that must stay
+    # world-readable/executable under the script's umask 077 (a root login
+    # may install into /usr/local/bin; launchd execs the daemon).
+    [ -d "$INSTALL_DIR" ] || (umask 022 && mkdir -p "$INSTALL_DIR")
 
     info "Extracting binaries to $INSTALL_DIR..."
     tar -xzf "$WORK_DIR/$ARCHIVE_NAME" -C "$WORK_DIR"
 
     for bin in hqsshd hqssh; do
         [ -f "$WORK_DIR/$bin" ] || error "Binary '$bin' not found in archive"
-        chmod +x "$WORK_DIR/$bin"
+        chmod 755 "$WORK_DIR/$bin"
     done
 
     if [ "$OS" = darwin ]; then
@@ -839,17 +842,18 @@ install_service_launchd() {
     if [ -L "$LOG_DIR" ] || [ -L "$LOG_FILE" ]; then
         error "$LOG_FILE (or its directory) is a symbolic link; refusing to touch it. Remove the link and re-run."
     fi
-    if [ "$SERVICE_SCOPE" != system ]; then
-        if ! touch "$LOG_FILE" 2>/dev/null; then
-            if [ -e "$LOG_FILE" ] && [ ! -f "$LOG_FILE" ]; then
-                error "$LOG_FILE is not a regular file; remove it and re-run"
-            fi
-            # Left root-owned by a pre-1.5 system-scope daemon. The user owns
-            # the directory, so the file can be moved aside without sudo.
-            warn "$LOG_FILE is not writable (root-owned by an earlier system daemon); moving it aside"
-            mv -f "$LOG_FILE" "$LOG_FILE.root-owned.$(date +%s)" || error "cannot move $LOG_FILE aside; remove it by hand and re-run"
-            touch "$LOG_FILE" || error "cannot create $LOG_FILE"
+    if [ -e "$LOG_FILE" ] && [ ! -w "$LOG_FILE" ]; then
+        if [ ! -f "$LOG_FILE" ]; then
+            error "$LOG_FILE is not a regular file; remove it and re-run"
         fi
+        # Left root-owned by a pre-1.5 system-scope daemon (which logged
+        # under \$HOME). The user owns the directory, so the file can be
+        # moved aside without sudo -- in either scope.
+        warn "$LOG_FILE is not writable (root-owned by an earlier system daemon); moving it aside"
+        mv -f "$LOG_FILE" "$LOG_FILE.root-owned.$(date +%s)" || error "cannot move $LOG_FILE aside; remove it by hand and re-run"
+    fi
+    if [ "$SERVICE_SCOPE" != system ]; then
+        touch "$LOG_FILE" || error "cannot create $LOG_FILE"
         chmod 600 "$LOG_FILE"
     fi
 

@@ -148,9 +148,11 @@ func Resolve(cliHost, cliUser, cliKey, cliPassword string, cliPort, cliDaemonPor
 	if env := os.Getenv("HQSSH_KEY"); env != "" {
 		r.Key = expandPath(env)
 	}
+	envDaemonPort := 0
 	if env := os.Getenv("HQSSH_DAEMON_PORT"); env != "" {
 		if p, err := strconv.Atoi(env); err == nil {
 			r.DaemonPort = p
+			envDaemonPort = p
 		}
 	}
 
@@ -176,8 +178,17 @@ func Resolve(cliHost, cliUser, cliKey, cliPassword string, cliPort, cliDaemonPor
 			if cliPassword == "" && hostCfg.Password != "" {
 				r.Password = hostCfg.Password
 			}
-			if cliDaemonPort == 0 && hostCfg.DaemonPort != 0 {
-				r.DaemonPort = hostCfg.DaemonPort
+			// Selecting an alias never inherits the default host's daemon
+			// port: the alias's own value, else the environment, else 50051.
+			if cliDaemonPort == 0 {
+				switch {
+				case hostCfg.DaemonPort != 0:
+					r.DaemonPort = hostCfg.DaemonPort
+				case envDaemonPort != 0:
+					r.DaemonPort = envDaemonPort
+				default:
+					r.DaemonPort = DefaultDaemonPort
+				}
 			}
 		} else {
 			r.Host = cliHost
