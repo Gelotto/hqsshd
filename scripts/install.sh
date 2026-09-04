@@ -76,7 +76,8 @@ fi
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-info()  { printf '%b[hqssh]%b %s\n' "$GREEN" "$RESET" "$*"; }
+# %b for the message too: callers pass ${BOLD}/${RESET} sequences
+info()  { printf '%b[hqssh]%b %b\n' "$GREEN" "$RESET" "$*"; }
 warn()  { printf '%b[hqssh]%b %s\n' "$YELLOW" "$RESET" "$*" >&2; }
 error() { printf '%b[hqssh]%b %s\n' "$RED" "$RESET" "$*" >&2; exit 1; }
 
