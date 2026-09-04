@@ -139,8 +139,9 @@ Restarting the daemon ends every session it hosts — the AI tools running insid
 | Survives logout | no | yes |
 | Needs sudo | no | to install, start, stop and restart |
 | Installing over SSH | loads into `user/<uid>` when nobody is logged in at the console: runs only while you have a session | works |
+| Claude Code subscription login | works (sessions run inside your GUI login session and can read the login keychain) | **does not work**: Claude Code keeps its login in the login keychain, which processes started by a LaunchDaemon cannot read even while you are logged in — Claude reports "Not logged in · Please run /login" |
 
-Pick the system daemon for a Mac you mostly reach from the phone. The installer prints a reminder whenever it runs over SSH, and `hqssh doctor` warns when the daemon only started hours after boot. A Mac with FileVault still needs its disk unlocked at the login window before launchd starts anything.
+Pick the system daemon for a Mac you mostly reach from the phone **and where the AI tools do not depend on the login keychain** (Claude Code with a subscription login does; an `ANTHROPIC_API_KEY` or tools that keep a credentials file do not). The installer prints a reminder whenever it runs over SSH, and `hqssh doctor` warns when the daemon only started hours after boot. A Mac with FileVault still needs its disk unlocked at the login window before launchd starts anything.
 
 The installer only ever keeps one of the two plists; switching scope removes the other.
 
@@ -271,6 +272,8 @@ Start with `hqssh doctor`. The situations below are the ones it diagnoses most o
 **Logs.** macOS: `~/.hqssh/logs/hqsshd.log` for the user agent, `/Library/Logs/hqsshd/hqsshd.log` for the system daemon (launchd's stdout/stderr; rotated to `.1`–`.3` by the installer on upgrade when larger than 5 MB). Linux: `journalctl --user -u hqsshd`. `hqssh service logs -f` follows either. `hqsshd --log-level debug` (or `log.level` in the config) adds detail. When the daemon fails to start, the reason is the last `level=ERROR` line — `hqssh doctor` prints the tail when anything fails.
 
 **Project discovery skips `~/Desktop`, `~/Documents`, `~/Downloads` (macOS).** Those folders are protected by TCC. Grant `hqsshd` Full Disk Access (System Settings › Privacy & Security › Full Disk Access; the installer signs the binary as `com.gelotto.hqsshd`, which is how it appears there), or keep projects elsewhere. On a headless Mac the login keychain stays locked until a GUI login, so tools that read credentials from it (Claude Code) may need one login after each reboot.
+
+**Claude Code says "Not logged in · Please run /login" in HQSSH sessions but works in Terminal (macOS).** The daemon is installed in the **system** scope: its sessions run outside your GUI login session and cannot read the login keychain where Claude Code stores its subscription login (Linux keeps the same login in `~/.claude/.credentials.json`, which is why it works there). Reinstall as a user agent: `curl -fsSL https://hqssh.com/install | HQSSH_SERVICE_SCOPE=user sh` (or the same with `HQSSH_LOCAL_ARCHIVE` for a local build), or give the daemon an `ANTHROPIC_API_KEY` if API billing is acceptable.
 
 **Slow first start on macOS.** The binaries are ad-hoc signed (no Developer ID, no notarization), so Gatekeeper assesses them on first launch after each update — a few seconds, once. Kernel log lines like `AMFI: '.../hqsshd' has no CMS blob` are expected and harmless.
 

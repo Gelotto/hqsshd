@@ -1171,6 +1171,11 @@ print_summary() {
             printf '    manual: systemctl --user status|restart %s ; journalctl --user -u %s -f\n' "$SERVICE_NAME" "$SERVICE_NAME"
         elif [ "$SERVICE_SCOPE" = system ]; then
             printf '    manual: sudo launchctl print system/%s ; sudo launchctl kickstart -k system/%s\n' "$LAUNCHD_LABEL" "$LAUNCHD_LABEL"
+            printf '\n'
+            printf '  Note: sessions of the system daemon run outside your GUI login session and\n'
+            printf '  cannot read the login keychain. Claude Code with a subscription login will\n'
+            printf '  say "Not logged in" here; use HQSSH_SERVICE_SCOPE=user on a Mac where you\n'
+            printf '  run it that way (or give the daemon an ANTHROPIC_API_KEY).\n'
         else
             # shellcheck disable=SC2016 # the $(id -u) is meant for the user's shell
             printf '    manual: launchctl print gui/$(id -u)/%s ; launchctl kickstart -k gui/$(id -u)/%s\n' "$LAUNCHD_LABEL" "$LAUNCHD_LABEL"
@@ -1178,7 +1183,8 @@ print_summary() {
         if [ "$OS" = darwin ] && [ "$SERVICE_SCOPE" = user ]; then
             printf '\n'
             printf '  Note: a user agent starts when you log in to the Mac, not at boot. For a\n'
-            printf '  headless Mac or unattended reboots, install the system daemon instead:\n'
+            printf '  headless Mac or unattended reboots, install the system daemon instead\n'
+            printf '  (its sessions cannot use a Claude Code subscription login: no keychain):\n'
             printf '    curl -fsSL https://hqssh.com/install | HQSSH_SERVICE_SCOPE=system sh\n'
             if [ -n "${SSH_CONNECTION:-}" ] || [ "$(console_user)" != "$(id -un)" ]; then
                 printf '  (You appear to be installing remotely; the system daemon is probably what you want.)\n'
