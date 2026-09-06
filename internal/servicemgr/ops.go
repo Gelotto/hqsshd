@@ -62,7 +62,7 @@ func (s Service) Status(ctx context.Context, r Runner) (StatusInfo, error) {
 			info.Problems = append(info.Problems, fmt.Sprintf("launchd domain %s is not available (no GUI login session)", s.Domain))
 		}
 		if domain != s.Domain && st.Loaded {
-			info.Problems = append(info.Problems, fmt.Sprintf("job is loaded in %s, not %s (no GUI session when it was loaded): it stops with your last login session and does not start at boot; for a permanent daemon use %s", domain, s.Domain, InstallSystemCommand))
+			info.Problems = append(info.Problems, fmt.Sprintf("job is loaded in %s, not %s (no GUI session when it was loaded): it stops with your last login session and does not start at boot", domain, s.Domain))
 		}
 		return info, nil
 	case KindSystemd:
@@ -288,9 +288,7 @@ var launchctlCodeRe = regexp.MustCompile(`(?:failed|error): (\d+):`)
 // NoGUISessionHint explains the LaunchAgent login caveat and the fix.
 func NoGUISessionHint() string {
 	return "LaunchAgents live in the GUI login session, which does not exist until someone logs in at the Mac's console.\n" +
-		"For a daemon that starts at boot and survives logout, install it as a system daemon:\n" +
-		"  " + InstallSystemCommand + "\n" +
-		"(Linux analog: loginctl enable-linger)"
+		"Log in at the Mac once; the service then starts at every GUI login."
 }
 
 // wait polls probe until it reports ok, giving up after opTimeout with the

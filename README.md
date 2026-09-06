@@ -41,11 +41,7 @@ curl -fsSL https://hqssh.com/install | sh
 
 This downloads the latest release, verifies the checksum, installs both binaries (`hqsshd` + `hqssh`) into `~/.local/bin`, sets up a background service — a systemd user service on Linux, a launchd user agent on macOS — starts it, and verifies it answers. Re-run to update; the running daemon is stopped cleanly first and the service definition is refreshed.
 
-On macOS a **user agent starts when you log in to the Mac's GUI, not at boot**. For a Mac you reach over SSH (headless, or after an unattended reboot), install the daemon in the **system** scope instead — the macOS equivalent of Linux's `loginctl enable-linger`:
-
-```bash
-curl -fsSL https://hqssh.com/install | HQSSH_SERVICE_SCOPE=system sh   # asks for sudo once
-```
+On macOS the service starts when you log in to the Mac, so after a reboot log in at the Mac once and it comes up on its own.
 
 Other options:
 
@@ -115,14 +111,14 @@ HQSSH_LOCAL_ARCHIVE=/tmp/hqsshd-$(go env GOOS)-$(go env GOARCH).tar.gz sh script
 
 The installer sets up a background service and `hqssh` manages it on both platforms. The raw commands are listed for reference; `hqssh service status` prints them for your installation.
 
-| Action | `hqssh` | macOS (user agent) | macOS (system daemon) | Linux (systemd --user) |
-|---|---|---|---|---|
-| Health check | `hqssh doctor` | — | — | — |
-| Status | `hqssh service status` | `launchctl print gui/$(id -u)/com.gelotto.hqsshd` | `sudo launchctl print system/com.gelotto.hqsshd` | `systemctl --user status hqsshd` |
-| Start | `hqssh service start` | `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.gelotto.hqsshd.plist` | `sudo launchctl bootstrap system /Library/LaunchDaemons/com.gelotto.hqsshd.plist` | `systemctl --user start hqsshd` |
-| Stop | `hqssh service stop` | `launchctl bootout gui/$(id -u)/com.gelotto.hqsshd` | `sudo launchctl bootout system/com.gelotto.hqsshd` | `systemctl --user stop hqsshd` |
-| Restart | `hqssh service restart` | `launchctl kickstart -k gui/$(id -u)/com.gelotto.hqsshd` | `sudo launchctl kickstart -k system/com.gelotto.hqsshd` | `systemctl --user restart hqsshd` |
-| Logs | `hqssh service logs -f` | `tail -f ~/.hqssh/logs/hqsshd.log` | same | `journalctl --user -u hqsshd -f` |
+| Action | `hqssh` | macOS (user agent) | Linux (systemd --user) |
+|---|---|---|---|
+| Health check | `hqssh doctor` | — | — |
+| Status | `hqssh service status` | `launchctl print gui/$(id -u)/com.gelotto.hqsshd` | `systemctl --user status hqsshd` |
+| Start | `hqssh service start` | `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.gelotto.hqsshd.plist` | `systemctl --user start hqsshd` |
+| Stop | `hqssh service stop` | `launchctl bootout gui/$(id -u)/com.gelotto.hqsshd` | `systemctl --user stop hqsshd` |
+| Restart | `hqssh service restart` | `launchctl kickstart -k gui/$(id -u)/com.gelotto.hqsshd` | `systemctl --user restart hqsshd` |
+| Logs | `hqssh service logs -f` | `tail -f ~/.hqssh/logs/hqsshd.log` | `journalctl --user -u hqsshd -f` |
 
 `hqssh doctor` runs without a daemon and checks the binaries, the service, the Unix socket, the TCP port the mobile app uses, configuration, logs and the data directory; every failed check prints the command that fixes it, and the exit status is `1` when anything failed (`--quiet` for scripts, `--json` for tooling).
 
@@ -130,19 +126,6 @@ Both service definitions restart the daemon after a crash or non-zero exit. A cl
 
 Restarting the daemon ends every session it hosts — the AI tools running inside them are terminated.
 
-### Boot-time start on macOS
-
-| | User agent (default) | System daemon (`HQSSH_SERVICE_SCOPE=system`) |
-|---|---|---|
-| Plist | `~/Library/LaunchAgents/com.gelotto.hqsshd.plist` | `/Library/LaunchDaemons/com.gelotto.hqsshd.plist` (root-owned; runs as you via `UserName`) |
-| Starts | at your GUI login | at boot, no login needed |
-| Survives logout | no | yes |
-| Needs sudo | no | to install, start, stop and restart |
-| Installing over SSH | loads into `user/<uid>` when nobody is logged in at the console: runs only while you have a session | works |
-
-Pick the system daemon for a Mac you mostly reach from the phone. The installer prints a reminder whenever it runs over SSH, and `hqssh doctor` warns when the daemon only started hours after boot. A Mac with FileVault still needs its disk unlocked at the login window before launchd starts anything.
-
-The installer only ever keeps one of the two plists; switching scope removes the other.
 
 ### Service files
 
@@ -240,7 +223,7 @@ The daemon reads the file at startup; restart it after editing (`hqssh service r
 
 Start with `hqssh doctor`. The situations below are the ones it diagnoses most often.
 
-**The daemon is not running after a reboot (macOS).** A launchd *user agent* only starts when you log in to the Mac's GUI; until then the phone sees "daemon not running" while SSH works fine. Log in at the console once, or install the system daemon so it starts at boot: `curl -fsSL https://hqssh.com/install | HQSSH_SERVICE_SCOPE=system sh`. `hqssh doctor` warns when the daemon started long after boot.
+**The daemon is not running after a reboot (macOS).** The service starts when you log in to the Mac; until then the phone sees "daemon not running" while SSH works fine. Log in at the Mac once and it comes up. `hqssh doctor` warns when the daemon started long after boot.
 
 **`Bootstrap failed: 5: Input/output error`** — launchd already has the job (the installer reuses it), or it rejects the plist: check `plutil -lint ~/Library/LaunchAgents/com.gelotto.hqsshd.plist` and that the binary it points to is executable. **`125: Domain does not support specified action` / `Could not find domain`** — there is no GUI session for your user (SSH-only login); see the previous item. **`37: Operation already in progress`** — a previous `bootout` is still tearing the job down; the installer and `hqssh service start` retry this automatically. **`133: Service is disabled`** — `launchctl enable gui/$(id -u)/com.gelotto.hqsshd`.
 
@@ -250,7 +233,7 @@ Start with `hqssh doctor`. The situations below are the ones it diagnoses most o
 
 **Custom `socket:` or `tcp_port:`.** `hqssh doctor` and `hqssh service` read them from `daemon.yaml`; `-S` overrides the socket. The installer's own readiness probe uses the defaults, then defers to `hqssh doctor` for the verdict.
 
-**Installing over SSH without a GUI session.** A user agent cannot be loaded into the (absent) GUI domain; the installer and `hqssh service start` load it into `user/<uid>` instead — it then runs while you have any session on the Mac and does not start at boot. `hqssh service status` says so. For a permanent daemon use `HQSSH_SERVICE_SCOPE=system`.
+**Installing over SSH without a GUI session.** A user agent cannot be loaded into the (absent) GUI domain; the installer and `hqssh service start` load it into `user/<uid>` instead — it then runs while you have any session on the Mac and does not start at boot. `hqssh service status` says so.
 
 **Stale `/tmp/hqssh.sock`.** After a SIGKILL or crash the socket file survives; the next start detects that nothing listens on it and removes it (`removing stale socket` in the log). `hqssh` reports "socket exists but nothing is listening" instead of a raw gRPC error. Remove it by hand only when no `hqsshd` process exists.
 
@@ -301,7 +284,7 @@ Even without gRPC-layer authentication, hqsshd applies input validation to limit
 
 - **Local-only by default** - TCP server binds to `127.0.0.1`, accessible only via SSH tunnel
 - **Transport-layer auth** - Relies on SSH for authentication and encryption
-- **Minimal privileges** - Runs as your user, no root required (the optional macOS system daemon is started by launchd as root and drops to your user before running)
+- **Minimal privileges** - Runs as your user, no root required
 - **Open source** - Full source code available for audit
 
 **What hqsshd does:**

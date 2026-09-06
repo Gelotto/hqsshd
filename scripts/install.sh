@@ -4,7 +4,6 @@
 #
 # Usage:
 #   curl -fsSL https://hqssh.com/install | sh
-#   curl -fsSL https://hqssh.com/install | HQSSH_SERVICE_SCOPE=system sh   # macOS: start at boot
 #   sh install.sh [--system] [--uninstall [--purge-logs]] [--help]
 #
 # Environment variables:
@@ -420,10 +419,7 @@ console_user() {
 print_no_gui_caveat() {
     printf '\n'
     warn "LaunchAgents start at GUI login, not at boot. Console user now: $(console_user); you: $(id -un)${SSH_CONNECTION:+ (over SSH)}."
-    warn "After a reboot the daemon only starts once someone logs in at the Mac's console."
-    warn "For a daemon that starts at boot and survives logout, install it as a system daemon:"
-    warn "    curl -fsSL https://hqssh.com/install | HQSSH_SERVICE_SCOPE=system sh"
-    warn "  (or: sh install.sh --system). Linux analog: loginctl enable-linger."
+    warn "After a reboot the daemon starts once you log in at the Mac's console."
 }
 
 # have_doctor caches whether the installed hqssh knows `doctor` (v1.4.0+).
@@ -1100,12 +1096,7 @@ print_summary() {
         fi
         if [ "$OS" = darwin ] && [ "$SERVICE_SCOPE" = user ]; then
             printf '\n'
-            printf '  Note: a user agent starts when you log in to the Mac, not at boot. For a\n'
-            printf '  headless Mac or unattended reboots, install the system daemon instead:\n'
-            printf '    curl -fsSL https://hqssh.com/install | HQSSH_SERVICE_SCOPE=system sh\n'
-            if [ -n "${SSH_CONNECTION:-}" ] || [ "$(console_user)" != "$(id -un)" ]; then
-                printf '  (You appear to be installing remotely; the system daemon is probably what you want.)\n'
-            fi
+            printf '  Note: the daemon starts when you log in to the Mac; after a reboot, log in once.\n'
         fi
     elif [ "$OS" = darwin ]; then
         printf '  To start the daemon manually:\n'

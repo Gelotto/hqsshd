@@ -242,7 +242,7 @@ func checkServicePlatform(e *env, svc servicemgr.Service, info servicemgr.Status
 			}
 			if os.Getenv("SSH_CONNECTION") != "" && guiOK {
 				checks = append(checks, pass("launchd",
-					"GUI session present; note a user agent still needs a console login after every reboot (system scope starts at boot)"))
+					"GUI session present; note a user agent still needs a console login after every reboot"))
 			}
 		}
 	case servicemgr.KindSystemd:
@@ -438,7 +438,7 @@ func checkBootDelay(e *env) []Check {
 	}
 	return []Check{warn(name,
 		fmt.Sprintf("after the last reboot the daemon only started %s later — a user agent waits for a GUI login, and the phone could not reach it until then", fmtDuration(delay)),
-		"for boot-time start install the system daemon: "+servicemgr.InstallSystemCommand)}
+		"log in at the Mac's console after a reboot; the service starts at GUI login")}
 }
 
 // ---------------------------------------------------------------------------
