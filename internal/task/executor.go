@@ -34,6 +34,10 @@ import (
 const (
 	defaultCols = 120
 	defaultRows = 40
+
+	// pathProbeTimeout bounds the interactive-shell PATH lookup before each
+	// run; on timeout the task runs with the daemon's PATH, as before.
+	pathProbeTimeout = 5 * time.Second
 )
 
 // Executor runs tasks and manages their lifecycle
@@ -46,6 +50,10 @@ type Executor struct {
 	// Track running tasks for cancellation
 	running   map[string]*runningTask
 	runningMu sync.RWMutex
+
+	// pathProbe returns the PATH tasks run with (see executeTask);
+	// replaceable in tests.
+	pathProbe func() (string, bool)
 }
 
 type runningTask struct {
@@ -66,6 +74,9 @@ func NewExecutor(taskStore *Store, runStore *RunStore, maxOutputSize, maxTimeout
 		maxOutputSize: int64(maxOutputSize),
 		maxTimeout:    maxTimeout,
 		running:       make(map[string]*runningTask),
+		pathProbe: func() (string, bool) {
+			return shellutil.InteractivePATH(pathProbeTimeout)
+		},
 	}
 }
 
@@ -182,6 +193,15 @@ func (e *Executor) executeTask(task *Task, run *Run, projectPath string) {
 	// Build command
 	cmd := e.buildCommand(task, workingDir)
 
+	// Tasks run in a non-interactive login shell: an interactive one on the
+	// task's PTY would block on init that prompts (nobody types) and print
+	// prompt-framework output into the run. Give it the interactive login
+	// shell's PATH instead, so tools set up in ~/.zshrc or ~/.bashrc (nvm,
+	// bun, volta, claude's installer) resolve like they do in sessions.
+	if path, ok := e.pathProbe(); ok {
+		cmd.Env = append(cmd.Env, "PATH="+path)
+	}
+
 	// Track for cancellation
 	e.runningMu.Lock()
 	e.running[run.ID] = &runningTask{
@@ -283,8 +303,8 @@ func (e *Executor) executeTask(task *Task, run *Run, projectPath string) {
 }
 
 // buildCommand builds the exec.Cmd for the task's tool.
-// All non-shell commands are wrapped in a login shell to ensure
-// tools installed via nvm/pyenv/asdf are available on PATH.
+// All commands are wrapped in a login shell; executeTask adds the
+// interactive shell's PATH so tools from ~/.zshrc/~/.bashrc resolve too.
 // Prompts are passed as positional arguments ($1) to prevent shell injection.
 func (e *Executor) buildCommand(task *Task, workingDir string) *exec.Cmd {
 	shell := shellutil.UserShell()

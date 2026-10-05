@@ -16,6 +16,7 @@ package task
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -493,5 +494,63 @@ func TestExecutor_InvalidWorkingDir_Integration(t *testing.T) {
 	}
 	if !strings.Contains(finalError, "does not exist") {
 		t.Errorf("error = %q, want to contain 'does not exist'", finalError)
+	}
+}
+
+// Tasks must find tools whose PATH entry only interactive init adds
+// (~/.zshrc: nvm, bun, volta, claude's installer), like sessions do —
+// previously `zsh -l -c` failed with "command not found".
+func TestExecutor_RunFindsToolOnInteractiveInitPath_Integration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	if _, err := os.Stat("/bin/zsh"); err != nil {
+		t.Skip("/bin/zsh not installed")
+	}
+
+	home := t.TempDir()
+	binDir := filepath.Join(home, "nvm-bin")
+	if err := os.Mkdir(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tool := filepath.Join(binDir, "hqssh-rc-tool")
+	if err := os.WriteFile(tool, []byte("#!/bin/sh\necho \"rc-tool ran: $1\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	zshrc := "export PATH=\"" + binDir + ":$PATH\"\n"
+	if err := os.WriteFile(filepath.Join(home, ".zshrc"), []byte(zshrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("ZDOTDIR", home)
+	t.Setenv("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+	t.Setenv("SHELL", "/bin/zsh")
+
+	dir := t.TempDir()
+	taskStore := NewStore(dir)
+	runStore := NewRunStore(dir, 0)
+	e := NewExecutor(taskStore, runStore, 0, 0)
+	defer e.Close()
+
+	task := taskStore.Create("rc tool", "", "hqssh-rc-tool", TaskScopeSystem, "", "hello", false, 20)
+	run, err := e.Run(task.ID, "")
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	var status RunStatus
+	var output, runErr string
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		if r := runStore.Get(run.ID); r != nil {
+			status, output, runErr = r.Status, r.Output, r.Error
+			if status == RunStatusCompleted || status == RunStatusFailed {
+				break
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if status != RunStatusCompleted || !strings.Contains(output, "rc-tool ran: hello") {
+		t.Fatalf("status = %v, output = %q, error = %q; want the rc-only tool to run", status, output, runErr)
 	}
 }
