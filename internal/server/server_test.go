@@ -562,3 +562,41 @@ func TestStopIsAJoinForConcurrentCallers(t *testing.T) {
 		t.Error("pidfile still present after Stop returned")
 	}
 }
+
+// Relative session directories resolve against the user's home, not the
+// daemon's cwd (launchd/systemd choose it; "." used to land wherever that was).
+func TestResolveUnderHome(t *testing.T) {
+	home := "/home/u"
+	cases := map[string]string{
+		"":         "/home/u",
+		".":        "/home/u",
+		"~":        "/home/u",
+		"~/src/a":  "/home/u/src/a",
+		"src/a":    "/home/u/src/a",
+		"./src/a/": "/home/u/src/a",
+	}
+	for in, want := range cases {
+		if got := resolveUnderHome(in, home); got != want {
+			t.Errorf("resolveUnderHome(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// The CLI defaults to the shell tool, which is opt-in: the rejection must
+// say how to enable it rather than calling it unknown.
+func TestInvalidToolError_ShellDisabledExplainsOptIn(t *testing.T) {
+	s := &Server{config: config.DefaultConfig()}
+	s.config.EnableShellTool = false
+
+	err := s.invalidToolError("shell")
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("code = %v, want FailedPrecondition", status.Code(err))
+	}
+	if msg := status.Convert(err).Message(); !strings.Contains(msg, "enable_shell_tool: true") {
+		t.Errorf("message %q does not name the config key", msg)
+	}
+
+	if err := s.invalidToolError("nope"); status.Code(err) != codes.InvalidArgument {
+		t.Errorf("unknown tool code = %v, want InvalidArgument", status.Code(err))
+	}
+}
