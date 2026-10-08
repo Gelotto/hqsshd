@@ -32,8 +32,8 @@ func TestShellToolRejectedByDefaultConfig(t *testing.T) {
 		Prompt: "echo hi",
 	})
 	st, _ := status.FromError(err)
-	if st.Code() != codes.InvalidArgument || !strings.Contains(st.Message(), `enable_shell_tool`) {
-		t.Fatalf("Task Create(shell) = %v; want InvalidArgument naming enable_shell_tool", err)
+	if st.Code() != codes.FailedPrecondition || !strings.Contains(st.Message(), `enable_shell_tool`) {
+		t.Fatalf("Task Create(shell) = %v; want FailedPrecondition naming enable_shell_tool", err)
 	}
 	t.Logf("Task Create(shell) with default config -> %v", err)
 
@@ -47,8 +47,8 @@ func TestShellToolRejectedByDefaultConfig(t *testing.T) {
 		Rows:             24,
 	})
 	st, _ = status.FromError(err)
-	if st.Code() != codes.InvalidArgument || !strings.Contains(st.Message(), `enable_shell_tool`) {
-		t.Fatalf("Session Create(shell) = %v; want InvalidArgument naming enable_shell_tool", err)
+	if st.Code() != codes.FailedPrecondition || !strings.Contains(st.Message(), `enable_shell_tool`) {
+		t.Fatalf("Session Create(shell) = %v; want FailedPrecondition naming enable_shell_tool", err)
 	}
 	t.Logf("Session Create(shell) with default config -> %v", err)
 

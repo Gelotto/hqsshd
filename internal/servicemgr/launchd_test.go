@@ -290,7 +290,7 @@ func TestLaunchdOps(t *testing.T) {
 		if !strings.Contains(err.Error(), "Domain does not support specified action") {
 			t.Errorf("stderr not surfaced: %v", err)
 		}
-		if !strings.Contains(err.Error(), "HQSSH_SERVICE_SCOPE=system") {
+		if !strings.Contains(err.Error(), "Log in at the Mac once") {
 			t.Errorf("GUI hint missing: %v", err)
 		}
 		// gui/501 first, then the user/501 fallback the legacy loader used

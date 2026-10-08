@@ -133,3 +133,61 @@ func countLines(t *testing.T, path string) int {
 	}
 	return strings.Count(string(data), "\n")
 }
+
+// A tool whose directory is added to PATH only by interactive shell init
+// (~/.zshrc; ~/.bashrc behind the stock "not interactive → return" guard)
+// must be detected, because sessions launch tools in an interactive login
+// shell and would run it fine. Regression: zsh -l never read ~/.zshrc, so
+// nvm/bun/volta installs showed "No AI tools" on macOS.
+func TestDetectAll_FindsToolOnInteractiveInitPath(t *testing.T) {
+	cases := []struct {
+		shell string
+		files func(binDir string) map[string]string
+	}{
+		{"/bin/zsh", func(binDir string) map[string]string {
+			return map[string]string{
+				".zshrc": "export PATH=\"" + binDir + ":$PATH\"\n",
+			}
+		}},
+		{"/bin/bash", func(binDir string) map[string]string {
+			return map[string]string{
+				".bash_profile": "[ -f ~/.bashrc ] && . ~/.bashrc\n",
+				".bashrc": "case $- in *i*) ;; *) return;; esac\n" +
+					"export PATH=\"" + binDir + ":$PATH\"\n",
+			}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(filepath.Base(tc.shell), func(t *testing.T) {
+			if _, err := os.Stat(tc.shell); err != nil {
+				t.Skipf("%s not installed", tc.shell)
+			}
+			home := t.TempDir()
+			binDir := filepath.Join(home, "nvm-bin")
+			if err := os.Mkdir(binDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			tool := filepath.Join(binDir, "hqssh-rc-tool")
+			if err := os.WriteFile(tool, []byte("#!/bin/sh\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for name, body := range tc.files(binDir) {
+				if err := os.WriteFile(filepath.Join(home, name), []byte(body), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Setenv("HOME", home)
+			t.Setenv("ZDOTDIR", home)
+			t.Setenv("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+
+			cfg := config.DefaultConfig()
+			cfg.Tools = []config.ToolConfig{{Name: "hqssh-rc-tool", Command: "hqssh-rc-tool"}}
+			d := NewDetector(cfg)
+			t.Setenv("SHELL", tc.shell)
+
+			if got := d.DetectAll(); len(got) != 1 || got[0] != "hqssh-rc-tool" {
+				t.Fatalf("DetectAll() = %v, want [hqssh-rc-tool] (PATH set only in interactive init)", got)
+			}
+		})
+	}
+}

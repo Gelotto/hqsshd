@@ -162,6 +162,31 @@ func (s *Server) Detector() *tools.Detector {
 	return s.detector
 }
 
+// resolveUnderHome resolves a non-absolute working directory against home:
+// "" and "~" are home itself, "~/x" and "x" are home/x.
+func resolveUnderHome(dir, home string) string {
+	if dir == "~" {
+		return home
+	}
+	if rest, ok := strings.CutPrefix(dir, "~/"); ok {
+		dir = rest
+	}
+	return filepath.Join(home, dir)
+}
+
+// shellDisabledMessage explains how to opt in, instead of calling a tool the
+// CLI defaults to "unknown".
+const shellDisabledMessage = `shell sessions are disabled on this host: set "enable_shell_tool: true" in ~/.hqssh/daemon.yaml and run "hqssh service restart"`
+
+// invalidToolError is the status for a tool isValidTool rejected: the
+// disabled-by-default shell gets FailedPrecondition with the opt-in steps.
+func (s *Server) invalidToolError(tool string) error {
+	if tool == "shell" && !s.config.EnableShellTool {
+		return status.Error(codes.FailedPrecondition, shellDisabledMessage)
+	}
+	return status.Errorf(codes.InvalidArgument, "unknown tool: %q", tool)
+}
+
 // isValidTool checks if a tool name is in the configured whitelist.
 // The "shell" tool requires explicit opt-in via config.EnableShellTool.
 // Tool names must also pass character validation.
@@ -179,17 +204,6 @@ func (s *Server) isValidTool(tool string) bool {
 		}
 	}
 	return false
-}
-
-// invalidToolError explains why a tool name was refused. "shell" is a
-// built-in that is off by default, and the fix is a config key the caller
-// cannot discover from "unknown tool".
-func (s *Server) invalidToolError(tool string) error {
-	if tool == "shell" && !s.config.EnableShellTool && config.ValidateToolName(tool) {
-		return status.Error(codes.InvalidArgument,
-			`tool "shell" is disabled: set enable_shell_tool: true in ~/.hqssh/daemon.yaml and restart the daemon`)
-	}
-	return status.Errorf(codes.InvalidArgument, "unknown tool: %q", tool)
 }
 
 // authUnaryInterceptor validates the auth token on unary RPCs.
@@ -483,13 +497,14 @@ func (s *sessionService) Create(ctx context.Context, req *pb.CreateSessionReques
 		workingDir = proj.Path
 	}
 
-	if workingDir == "" {
-		// Default to home directory
+	if !filepath.IsAbs(workingDir) {
+		// Empty, relative and ~ paths are relative to the user's home, never
+		// to the daemon's own cwd (whatever the service manager chose)
 		homeDir, err := os.UserHomeDir()
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "failed to get home directory: %v", err)
 		}
-		workingDir = homeDir
+		workingDir = resolveUnderHome(workingDir, homeDir)
 	}
 
 	// Validate working directory exists and is a directory
@@ -1289,6 +1304,9 @@ func (s *taskService) Run(ctx context.Context, req *pb.RunTaskRequest) (*pb.Task
 	}
 
 	if !s.server.isValidTool(t.Tool) {
+		if t.Tool == "shell" {
+			return nil, s.server.invalidToolError(t.Tool)
+		}
 		return nil, status.Errorf(codes.FailedPrecondition, "task has invalid tool %q (not in current config)", t.Tool)
 	}
 

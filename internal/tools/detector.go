@@ -206,8 +206,8 @@ func (d *Detector) ClearCache() {
 
 // detectTool detects if a tool is installed.
 // When no custom Detect command is configured, uses exec.LookPath() which is
-// safe and doesn't invoke a shell. Custom Detect commands are wrapped in a
-// login shell to ensure tools installed via nvm/pyenv/asdf/cargo are available.
+// safe and doesn't invoke a shell. Custom Detect commands are wrapped in an
+// interactive login shell to ensure tools installed via nvm/pyenv/asdf/cargo are available.
 func (d *Detector) detectTool(tool config.ToolConfig) bool {
 	// Validate tool name to prevent injection
 	if !config.ValidateToolName(tool.Name) {
@@ -219,8 +219,8 @@ func (d *Detector) detectTool(tool config.ToolConfig) bool {
 		if _, err := exec.LookPath(tool.Command); err == nil {
 			return true
 		}
-		// Fallback: try via login shell for tools installed by nvm/pyenv/asdf
-		// that modify PATH in shell init scripts
+		// Fallback: try via the interactive login shell for tools installed
+		// by nvm/pyenv/asdf/bun that modify PATH in shell init scripts
 		if !config.ValidateToolName(tool.Command) {
 			return false
 		}
@@ -234,17 +234,26 @@ func (d *Detector) detectTool(tool config.ToolConfig) bool {
 	return d.runInLoginShell(tool.Name, tool.Detect)
 }
 
-// runInLoginShell runs script in the user's login shell with a timeout and
-// reports whether it exited 0. The shell gets its own process group so a
-// timeout kills anything it spawned, not just the shell.
+// runInLoginShell runs script in the user's interactive login shell with a
+// timeout and reports whether it exited 0.
+//
+// The shell must be interactive (-i) like the one sessions launch tools in
+// (session/pty.go), or detection and launch disagree: zsh -l never reads
+// ~/.zshrc and a stock ~/.bashrc returns early when not interactive, which
+// is exactly where nvm, bun, volta and the claude installer add their PATH
+// lines — the tool launches fine but the app reports "No AI tools".
+//
+// The shell runs in its own session: no controlling tty (an interactive
+// shell in a background process group of the daemon's tty would stop on
+// SIGTTOU), and as group leader a timeout kills everything it spawned.
 func (d *Detector) runInLoginShell(toolName, script string) bool {
 	shell := shellutil.UserShell()
 
 	ctx, cancel := context.WithTimeout(context.Background(), d.timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, shell, "-l", "-c", script)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd := exec.CommandContext(ctx, shell, "-l", "-i", "-c", script)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Cancel = func() error {
 		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	}

@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	pb "github.com/gelotto/hqsshd/proto"
@@ -44,14 +45,15 @@ in the daemon's daemon.yaml.
 Examples:
   hqssh new                              # First detected AI tool
   hqssh new --tool claude                # New Claude session
-  hqssh new --tool claude --project .    # In current directory
+  hqssh new --tool claude                # In the current directory (local daemon)
+  hqssh new --tool claude -d ~/src/app   # In a specific directory
   hqssh new --tool aider --no-attach     # Create but don't attach`,
 	RunE: runNew,
 }
 
 func init() {
-	newCmd.Flags().StringVarP(&newTool, "tool", "t", "", "Tool to launch: claude, codex, aider, shell (default: first detected)")
-	newCmd.Flags().StringVarP(&newProject, "project", "d", "", "Working directory or project path")
+	newCmd.Flags().StringVarP(&newTool, "tool", "t", "", "Tool to launch: claude, codex, aider, shell (default: first detected AI tool)")
+	newCmd.Flags().StringVarP(&newProject, "project", "d", "", "Working directory (default: current directory locally, home directory on a remote host)")
 	newCmd.Flags().BoolVar(&newNoAttach, "no-attach", false, "Create session but don't attach")
 	newCmd.Flags().StringVarP(&newName, "name", "n", "", "Explicit session name (auto-generated if omitted)")
 	rootCmd.AddCommand(newCmd)
@@ -80,10 +82,10 @@ func runNew(cmd *cobra.Command, args []string) error {
 	// Get terminal size
 	cols, rows := termSize()
 
-	// Pass --project value as-is to the daemon.
-	// The daemon resolves relative paths on its own filesystem.
-	// Do NOT resolve locally — "." means the remote CWD, not the local one.
-	workingDir := newProject
+	workingDir, err := sessionWorkingDir(newProject, hostLabel == "")
+	if err != nil {
+		return err
+	}
 
 	tool, err := resolveTool(ctx, c, newTool)
 	if err != nil {
@@ -115,4 +117,23 @@ func runNew(cmd *cobra.Command, args []string) error {
 	fmt.Fprintf(os.Stderr, "Attaching to session %s...\n", shortID(session.Id))
 
 	return attachToSession(ctx, cancel, c, session.Id, hostLabel)
+}
+
+// sessionWorkingDir picks the directory to send with Create. A local daemon
+// shares this filesystem, so an empty or relative dir means the caller's
+// current directory, like any other command. For a remote host the value is
+// sent as-is: the local cwd means nothing there, and the daemon resolves
+// empty and relative paths against the remote user's home.
+func sessionWorkingDir(dir string, local bool) (string, error) {
+	if !local {
+		return dir, nil
+	}
+	if dir == "" {
+		dir = "."
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("resolve working directory %q: %w", dir, err)
+	}
+	return abs, nil
 }

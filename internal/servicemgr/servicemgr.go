@@ -39,8 +39,6 @@ const (
 	InstallURL = "https://hqssh.com/install"
 	// InstallCommand is the one-line installer.
 	InstallCommand = "curl -fsSL " + InstallURL + " | sh"
-	// InstallSystemCommand installs the boot-time macOS system daemon.
-	InstallSystemCommand = "curl -fsSL " + InstallURL + " | HQSSH_SERVICE_SCOPE=system sh"
 )
 
 // Kind is the service manager a service definition belongs to.
