@@ -91,7 +91,7 @@ A manual install has no background service. Re-running the installer with the bi
 
 ### From Source
 
-Requires Go 1.25+:
+Requires Go 1.26+:
 
 ```bash
 git clone https://github.com/gelotto/hqsshd.git

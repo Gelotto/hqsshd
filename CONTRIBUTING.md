@@ -6,7 +6,7 @@ Thank you for your interest in contributing to hqsshd! This document covers deve
 
 ### Prerequisites
 
-- Go 1.25+
+- Go 1.26+
 - `protoc` (Protocol Buffers compiler)
 - `make`
 
