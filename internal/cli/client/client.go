@@ -69,8 +69,9 @@ type Config struct {
 	User            string
 	KeyPath         string
 	Password        string
-	InsecureHostKey bool // Skip host key verification (not recommended)
-	DaemonPort      int  // hqsshd tcp_port on the remote host (0 = 50051)
+	InsecureHostKey bool   // Skip host key verification (not recommended)
+	DaemonPort      int    // hqsshd tcp_port on the remote host (0 = 50051)
+	AuthToken       string // hqsshd auth_token on the remote host ("" = none)
 }
 
 // Connect establishes SSH connection and gRPC tunnel.
@@ -150,15 +151,7 @@ func connectWith(ctx context.Context, cfg Config, sshConfig *ssh.ClientConfig) (
 
 	// Connect gRPC through tunnel
 	grpcAddr := listener.Addr().String()
-	grpcConn, err := grpc.NewClient(grpcAddr,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxRecvMsgSize)),
-		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:                20 * time.Second,
-			Timeout:             5 * time.Second,
-			PermitWithoutStream: true,
-		}),
-	)
+	grpcConn, err := grpc.NewClient(grpcAddr, remoteDialOptions(cfg.AuthToken)...)
 	if err != nil {
 		c.Close()
 		return nil, fmt.Errorf("gRPC connect: %w", err)
@@ -386,6 +379,19 @@ func localDialOptions(token string) []grpc.DialOption {
 		opts = append(opts, grpc.WithPerRPCCredentials(tokenCreds{token: token}))
 	}
 	return opts
+}
+
+// remoteDialOptions builds the options for a connection through the SSH
+// tunnel: the tunnel is the transport security, keepalives detect a dead
+// link, and the remote daemon's auth token goes on every RPC.
+func remoteDialOptions(token string) []grpc.DialOption {
+	return append(localDialOptions(token),
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                20 * time.Second,
+			Timeout:             5 * time.Second,
+			PermitWithoutStream: true,
+		}),
+	)
 }
 
 // LocalAuthToken returns the auth_token from ~/.hqssh/daemon.yaml ("" when

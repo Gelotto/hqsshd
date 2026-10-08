@@ -37,6 +37,7 @@ type Host struct {
 	Key        string `yaml:"key"`
 	Password   string `yaml:"password"`    // Not recommended
 	DaemonPort int    `yaml:"daemon_port"` // hqsshd tcp_port on that host (default 50051)
+	AuthToken  string `yaml:"auth_token"`  // hqsshd auth_token on that host (sent as a bearer token)
 }
 
 // Resolved holds the final resolved connection settings after
@@ -48,6 +49,7 @@ type Resolved struct {
 	Key        string
 	Password   string
 	DaemonPort int
+	AuthToken  string // daemon auth_token; only ever the selected host's own
 }
 
 // DefaultDaemonPort is hqsshd's default tcp_port.
@@ -128,6 +130,7 @@ func Resolve(cliHost, cliUser, cliKey, cliPassword string, cliPort, cliDaemonPor
 			if hostCfg.DaemonPort != 0 {
 				r.DaemonPort = hostCfg.DaemonPort
 			}
+			r.AuthToken = hostCfg.AuthToken
 		} else {
 			r.Host = cfg.DefaultHost
 		}
@@ -135,6 +138,9 @@ func Resolve(cliHost, cliUser, cliKey, cliPassword string, cliPort, cliDaemonPor
 
 	// Environment variables override config file
 	if env := os.Getenv("HQSSH_HOST"); env != "" {
+		if env != r.Host {
+			r.AuthToken = "" // the default host's token is not for this host
+		}
 		r.Host = env
 	}
 	if env := os.Getenv("HQSSH_USER"); env != "" {
@@ -147,6 +153,10 @@ func Resolve(cliHost, cliUser, cliKey, cliPassword string, cliPort, cliDaemonPor
 	}
 	if env := os.Getenv("HQSSH_KEY"); env != "" {
 		r.Key = expandPath(env)
+	}
+	envAuthToken := os.Getenv("HQSSH_AUTH_TOKEN")
+	if envAuthToken != "" {
+		r.AuthToken = envAuthToken
 	}
 	envDaemonPort := 0
 	if env := os.Getenv("HQSSH_DAEMON_PORT"); env != "" {
@@ -178,6 +188,12 @@ func Resolve(cliHost, cliUser, cliKey, cliPassword string, cliPort, cliDaemonPor
 			if cliPassword == "" && hostCfg.Password != "" {
 				r.Password = hostCfg.Password
 			}
+			// Never send another host's token: the alias's own, else the
+			// environment's, else none.
+			r.AuthToken = hostCfg.AuthToken
+			if r.AuthToken == "" {
+				r.AuthToken = envAuthToken
+			}
 			// Selecting an alias never inherits the default host's daemon
 			// port: the alias's own value, else the environment, else 50051.
 			if cliDaemonPort == 0 {
@@ -193,7 +209,8 @@ func Resolve(cliHost, cliUser, cliKey, cliPassword string, cliPort, cliDaemonPor
 		} else {
 			r.Host = cliHost
 			// A raw hostname is not the default host either: its
-			// daemon_port belongs to another machine.
+			// daemon_port and auth_token belong to another machine.
+			r.AuthToken = envAuthToken
 			if cliDaemonPort == 0 {
 				r.DaemonPort = DefaultDaemonPort
 				if envDaemonPort != 0 {

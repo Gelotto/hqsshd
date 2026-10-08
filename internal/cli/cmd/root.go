@@ -68,6 +68,7 @@ CONFIG:
         host: server.example.com
         user: ubuntu
         key: ~/.ssh/id_ed25519
+        auth_token: ...    # if hqsshd sets auth_token (or HQSSH_AUTH_TOKEN)
 
   Then just run: hqssh sessions
 

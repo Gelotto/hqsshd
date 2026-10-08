@@ -66,6 +66,7 @@ func connectDaemon(ctx context.Context) (*client.Client, string, error) {
 			Password:        cfg.Password,
 			InsecureHostKey: insecureKey,
 			DaemonPort:      cfg.DaemonPort,
+			AuthToken:       cfg.AuthToken,
 		})
 		if err != nil {
 			return nil, "", fmt.Errorf("connect: %w", err)

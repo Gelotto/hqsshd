@@ -281,7 +281,7 @@ hqsshd delegates authentication entirely to the transport layer — it trusts al
 ssh -L /tmp/hqssh-remote.sock:/tmp/hqssh.sock user@host
 ```
 
-**Alternative: require an auth token.** Set `auth_token` in `~/.hqssh/daemon.yaml` and every RPC (on both listeners) must carry matching `authorization: Bearer <token>` metadata — other local users can no longer drive the daemon through the TCP port. Enter the same token in the HQSSH app's system settings (DAEMON AUTH TOKEN field, stored in the platform keystore). Validation uses a constant-time compare.
+**Alternative: require an auth token.** Set `auth_token` in `~/.hqssh/daemon.yaml` and every RPC (on both listeners) must carry matching `authorization: Bearer <token>` metadata — other local users can no longer drive the daemon through the TCP port. Enter the same token in the HQSSH app's system settings (DAEMON AUTH TOKEN field, stored in the platform keystore). For the desktop CLI, local commands read the token from `daemon.yaml` themselves; for a remote host put it in `~/.hqssh/config.yaml` under that host (`auth_token:`, the file should be mode 0600) or export `HQSSH_AUTH_TOKEN` — a host's token is only ever sent to that host. Validation uses a constant-time compare.
 
 ```yaml
 # ~/.hqssh/daemon.yaml
