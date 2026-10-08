@@ -39,6 +39,10 @@ const (
 	// pathProbeTimeout bounds the interactive-shell PATH lookup before each
 	// run; on timeout the task runs with the daemon's PATH, as before.
 	pathProbeTimeout = 5 * time.Second
+
+	// closeWaitTimeout bounds how long Close waits for cancelled runs to
+	// record their final state (their process groups were SIGKILLed).
+	closeWaitTimeout = 3 * time.Second
 )
 
 // Executor runs tasks and manages their lifecycle
@@ -48,13 +52,16 @@ type Executor struct {
 	maxOutputSize int64 // max task output in bytes
 	maxTimeout    int   // max allowed timeout in seconds (0 = no limit)
 
-	// Track running tasks for cancellation
+	// Track running tasks for cancellation. A run is registered by Run,
+	// before executeTask does anything, and removed when executeTask returns.
 	running   map[string]*runningTask
 	runningMu sync.RWMutex
+	closed    bool           // set by Close; guarded by runningMu
+	wg        sync.WaitGroup // one per executeTask goroutine
 
-	// pathProbe returns the PATH tasks run with (see executeTask);
-	// replaceable in tests.
-	pathProbe func() (string, bool)
+	// pathProbe returns the PATH tasks run with (see executeTask); it must
+	// return early when ctx is cancelled. Replaceable in tests.
+	pathProbe func(ctx context.Context) (string, bool)
 }
 
 type runningTask struct {
@@ -114,8 +121,8 @@ func NewExecutor(taskStore *Store, runStore *RunStore, maxOutputSize, maxTimeout
 		maxOutputSize: int64(maxOutputSize),
 		maxTimeout:    maxTimeout,
 		running:       make(map[string]*runningTask),
-		pathProbe: func() (string, bool) {
-			return shellutil.InteractivePATH(pathProbeTimeout)
+		pathProbe: func(ctx context.Context) (string, bool) {
+			return shellutil.InteractivePATHContext(ctx, pathProbeTimeout)
 		},
 	}
 }
@@ -132,17 +139,39 @@ func (e *Executor) Run(taskID string, projectPath string) (*Run, error) {
 		return nil, fmt.Errorf("interactive tasks not yet supported")
 	}
 
-	// Atomic check-and-create under lock to prevent TOCTOU race
+	// Atomic check-and-create under lock to prevent TOCTOU race. The run
+	// is registered for cancellation here, while still pending: executeTask
+	// spends up to pathProbeTimeout before starting the process, and a
+	// Cancel or Close in that window must stop it from starting.
+	ctx, cancel := context.WithCancel(context.Background())
 	e.runningMu.Lock()
+	if e.closed {
+		e.runningMu.Unlock()
+		cancel()
+		return nil, fmt.Errorf("task executor is shut down")
+	}
 	if existing := e.runStore.GetRunning(taskID); existing != nil {
 		e.runningMu.Unlock()
+		cancel()
 		return nil, fmt.Errorf("task is already running (run_id: %s)", existing.ID)
 	}
 	run := e.runStore.Create(taskID)
+	rt := &runningTask{cancel: cancel}
+	e.running[run.ID] = rt
+	e.wg.Add(1)
 	e.runningMu.Unlock()
 
 	// Execute in background
-	go e.executeTask(task, run, projectPath)
+	go func() {
+		defer e.wg.Done()
+		defer func() {
+			e.runningMu.Lock()
+			delete(e.running, run.ID)
+			e.runningMu.Unlock()
+		}()
+		defer cancel()
+		e.executeTask(ctx, rt, task, run, projectPath)
+	}()
 
 	return run, nil
 }
@@ -169,25 +198,32 @@ func (e *Executor) Cancel(runID string) error {
 		return fmt.Errorf("failed to cancel run")
 	}
 
-	// Cancel the context and kill the process group.
+	// Mark it cancelled first (Complete/Fail are no-ops afterwards), then
+	// cancel the context and kill the process group. The entry stays in
+	// e.running until executeTask returns.
 	// Don't call cmd.Wait() here — the executeTask() goroutine handles it.
 	// Concurrent Wait() on the same exec.Cmd is undefined behavior.
+	e.runStore.Cancel(runID)
 	rt.cancel()
 	rt.killGroup()
-
-	e.runStore.Cancel(runID)
-
-	e.runningMu.Lock()
-	delete(e.running, runID)
-	e.runningMu.Unlock()
 
 	return nil
 }
 
-// executeTask runs the task in a PTY and captures output
-func (e *Executor) executeTask(task *Task, run *Run, projectPath string) {
-	// Mark as running
-	e.runStore.UpdateStatus(run.ID, RunStatusRunning)
+// executeTask runs the task in a PTY and captures output. parent is
+// cancelled by Cancel/Close (rt.cancel); Run registered rt beforehand.
+func (e *Executor) executeTask(parent context.Context, rt *runningTask, task *Task, run *Run, projectPath string) {
+	// Persist run state when done, whichever way it ended
+	defer func() {
+		if err := e.runStore.Save(); err != nil {
+			logging.Warn("failed to save task run store", "run_id", run.ID, "error", err)
+		}
+	}()
+
+	// Mark as running, unless it was cancelled before we got here
+	if !e.runStore.MarkRunning(run.ID) {
+		return
+	}
 
 	// Determine working directory
 	workingDir := projectPath
@@ -218,15 +254,22 @@ func (e *Executor) executeTask(task *Task, run *Run, projectPath string) {
 		effectiveTimeout = e.maxTimeout // Clamp to ceiling
 	}
 
-	// Setup timeout context
-	var ctx context.Context
-	var cancel context.CancelFunc
+	// Setup timeout context under the run's cancellable context
+	ctx, cancel := parent, context.CancelFunc(func() {})
 	if effectiveTimeout > 0 {
-		ctx, cancel = context.WithTimeout(context.Background(), time.Duration(effectiveTimeout)*time.Second)
-	} else {
-		ctx, cancel = context.WithCancel(context.Background())
+		ctx, cancel = context.WithTimeout(parent, time.Duration(effectiveTimeout)*time.Second)
 	}
 	defer cancel()
+
+	// endEarly records why ctx ended before the process ran: a timeout
+	// fails the run, a Cancel/Close already marked it cancelled.
+	endEarly := func() {
+		if ctx.Err() == context.DeadlineExceeded {
+			e.runStore.Fail(run.ID, fmt.Sprintf("task timed out after %d seconds", effectiveTimeout))
+		} else {
+			e.runStore.Cancel(run.ID)
+		}
+	}
 
 	// Build command
 	cmd := e.buildCommand(task, workingDir)
@@ -236,24 +279,19 @@ func (e *Executor) executeTask(task *Task, run *Run, projectPath string) {
 	// prompt-framework output into the run. Give it the interactive login
 	// shell's PATH instead, so tools set up in ~/.zshrc or ~/.bashrc (nvm,
 	// bun, volta, claude's installer) resolve like they do in sessions.
-	if path, ok := e.pathProbe(); ok {
+	if path, ok := e.pathProbe(ctx); ok {
 		cmd.Env = append(cmd.Env, "PATH="+path)
 	}
+	if ctx.Err() != nil {
+		// Cancelled (or timed out) during the probe: never start it
+		endEarly()
+		return
+	}
 
-	// Track for cancellation. The process group id is published only once
-	// the process exists (below); Cancel/Close read it under rt.mu, so a
-	// cancel that lands during fork/exec relies on ctx and the check after
-	// Start instead of racing cmd.Process.
-	rt := &runningTask{cancel: cancel}
-	e.runningMu.Lock()
-	e.running[run.ID] = rt
-	e.runningMu.Unlock()
-
-	defer func() {
-		e.runningMu.Lock()
-		delete(e.running, run.ID)
-		e.runningMu.Unlock()
-	}()
+	// The process group id is published only once the process exists
+	// (below); Cancel/Close read it under rt.mu, so a cancel that lands
+	// during fork/exec relies on ctx and the check after Start instead of
+	// racing cmd.Process.
 
 	// Start with PTY for proper terminal handling
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{
@@ -348,11 +386,6 @@ func (e *Executor) executeTask(task *Task, run *Run, projectPath string) {
 			e.runStore.Cancel(run.ID)
 		}
 	}
-
-	// Persist run state after completion
-	if err := e.runStore.Save(); err != nil {
-		logging.Warn("failed to save task run store", "run_id", run.ID, "error", err)
-	}
 }
 
 // buildCommand builds the exec.Cmd for the task's tool.
@@ -410,22 +443,34 @@ func (e *Executor) GetRunningCount() int {
 	return len(e.running)
 }
 
-// Close stops all running tasks.
+// Close stops all running tasks, refuses new ones, and waits (bounded by
+// closeWaitTimeout) for their goroutines to record the final state.
 // Only cancels context and kills processes. The executeTask() goroutine
 // handles cmd.Wait() — calling it here too would be a concurrent Wait() race.
 func (e *Executor) Close() {
 	e.runningMu.Lock()
+	e.closed = true
 	// Copy entries to avoid holding the lock during Kill
 	snapshot := make(map[string]*runningTask, len(e.running))
 	for k, v := range e.running {
 		snapshot[k] = v
 	}
-	e.running = make(map[string]*runningTask)
 	e.runningMu.Unlock()
 
 	for runID, rt := range snapshot {
+		e.runStore.Cancel(runID) // first: a run still pending must not start
 		rt.cancel()
 		rt.killGroup() // the entire process group
-		e.runStore.Cancel(runID)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		e.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(closeWaitTimeout):
+		logging.Warn("task runs still finishing after shutdown", "timeout", closeWaitTimeout)
 	}
 }

@@ -39,9 +39,15 @@ const interactivePathMarker = "__HQSSH_PATH__="
 // blocking, and a timeout kills everything it spawned. ok is false when the
 // shell failed, timed out, or printed no PATH.
 func InteractivePATH(timeout time.Duration) (path string, ok bool) {
+	return InteractivePATHContext(context.Background(), timeout)
+}
+
+// InteractivePATHContext is InteractivePATH bounded by ctx as well: a
+// cancelled ctx kills the probe shell and returns ok == false.
+func InteractivePATHContext(parent context.Context, timeout time.Duration) (path string, ok bool) {
 	shell := UserShell()
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 
 	var stdout bytes.Buffer

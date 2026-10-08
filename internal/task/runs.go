@@ -102,6 +102,15 @@ func (s *RunStore) Load() error {
 	s.byTask = make(map[string][]*Run)
 
 	for _, r := range runs {
+		// No process survives a daemon restart: a run saved as pending or
+		// running would otherwise block its task (GetRunning) forever.
+		if r.Status == RunStatusPending || r.Status == RunStatusRunning {
+			r.Status = RunStatusFailed
+			r.Error = "daemon stopped before the run finished"
+			if r.CompletedAt.IsZero() {
+				r.CompletedAt = time.Now()
+			}
+		}
 		s.runs[r.ID] = r
 		s.byTask[r.TaskID] = append(s.byTask[r.TaskID], r)
 	}
@@ -214,24 +223,40 @@ func (s *RunStore) SetSessionID(runID, sessionID string) {
 	}
 }
 
-// Complete marks a run as completed with output
+// MarkRunning moves a pending run to running. It returns false when the
+// run is gone or no longer pending (cancelled before it could start), in
+// which case the caller must not start it.
+func (s *RunStore) MarkRunning(runID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if run, exists := s.runs[runID]; exists && run.Status == RunStatusPending {
+		run.Status = RunStatusRunning
+		return true
+	}
+	return false
+}
+
+// Complete marks a run as completed with output. A cancelled run keeps
+// its status: the cancel was already reported to the caller as success.
 func (s *RunStore) Complete(runID, output string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if run, exists := s.runs[runID]; exists {
+	if run, exists := s.runs[runID]; exists && run.Status != RunStatusCancelled {
 		run.Status = RunStatusCompleted
 		run.Output = output
 		run.CompletedAt = time.Now()
 	}
 }
 
-// Fail marks a run as failed with error
+// Fail marks a run as failed with error. A cancelled run keeps its
+// status (see Complete).
 func (s *RunStore) Fail(runID, errMsg string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if run, exists := s.runs[runID]; exists {
+	if run, exists := s.runs[runID]; exists && run.Status != RunStatusCancelled {
 		run.Status = RunStatusFailed
 		run.Error = errMsg
 		run.CompletedAt = time.Now()
@@ -300,14 +325,16 @@ func (s *RunStore) ListAll(limit int) []*Run {
 	return runs
 }
 
-// GetRunning returns the currently running run for a task, if any
-// (returns a copy to prevent mutation of internal state)
+// GetRunning returns the task's active (pending or running) run, if any
+// (returns a copy to prevent mutation of internal state). Pending counts:
+// a run is pending from Executor.Run until its process starts, and a
+// second Run in that window must not start a duplicate.
 func (s *RunStore) GetRunning(taskID string) *Run {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	for _, r := range s.byTask[taskID] {
-		if r.Status == RunStatusRunning {
+		if r.Status == RunStatusRunning || r.Status == RunStatusPending {
 			copy := *r
 			return &copy
 		}
