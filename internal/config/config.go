@@ -93,11 +93,11 @@ type EventsConfig struct {
 type SessionConfig struct {
 	IdleTimeout       int    `yaml:"idle_timeout"`        // Seconds before session considered idle (default: 86400 = 24h)
 	MaxSessions       int    `yaml:"max_sessions"`        // Maximum concurrent sessions (default: 20)
-	HistorySize       int    `yaml:"history_size"`        // Lines of scrollback, ~100 bytes each; sets the buffer when max_scrollback_size is absent (default: 10000)
+	HistorySize       int    `yaml:"history_size"`        // Legacy, lines of scrollback (~100 bytes each); only used when max_scrollback_size is 0
 	LogRetentionDays  int    `yaml:"log_retention_days"`  // Days to keep ended session logs (default: 30, 0 = forever)
 	LogDirectory      string `yaml:"log_directory"`       // Directory for session logs (default: ~/.hqssh/logs/sessions)
 	ClientBufferSize  int    `yaml:"client_buffer_size"`  // Per-client output channel buffer, in PTY chunks (default: 1024)
-	MaxScrollbackSize int    `yaml:"max_scrollback_size"` // Max scrollback buffer in bytes; overrides history_size (default: 10MB)
+	MaxScrollbackSize int    `yaml:"max_scrollback_size"` // Max scrollback buffer in bytes (default: 10MB)
 }
 
 type TaskConfig struct {
@@ -222,20 +222,6 @@ func LoadFromPath(path string) (*Config, error) {
 
 	if err := yaml.Unmarshal(data, config); err != nil {
 		return nil, err
-	}
-
-	// history_size (lines) only takes effect when the file does not also
-	// set max_scrollback_size (bytes): the defaults merged above would
-	// otherwise leave the 10 MB byte cap in charge and history_size dead.
-	var presence struct {
-		Sessions struct {
-			HistorySize       *int `yaml:"history_size"`
-			MaxScrollbackSize *int `yaml:"max_scrollback_size"`
-		} `yaml:"sessions"`
-	}
-	if err := yaml.Unmarshal(data, &presence); err == nil &&
-		presence.Sessions.HistorySize != nil && presence.Sessions.MaxScrollbackSize == nil {
-		config.Sessions.MaxScrollbackSize = 0 // derive from history_size (see session.NewManager)
 	}
 
 	return config, nil

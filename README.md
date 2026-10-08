@@ -209,7 +209,7 @@ log:
 sessions:
   idle_timeout: 86400       # Kill idle sessions after 24 hours (0 = disabled)
   max_sessions: 20          # Maximum concurrent sessions
-  history_size: 10000       # Scrollback buffer size (lines)
+  max_scrollback_size: 10485760  # Scrollback kept per session for re-attach, in bytes (10 MB)
 
 # Push notifications for session events (bell rung, session ended).
 # Point webhook_url at an https://ntfy.sh/<your-topic> URL and install the
@@ -229,7 +229,7 @@ enable_shell_tool: false
 enable_reflection: false
 ```
 
-`sessions.history_size` is an estimate in lines (about 100 bytes each); set `sessions.max_scrollback_size` (bytes) to control the buffer exactly, it takes precedence when both are present.
+`sessions.history_size` (lines) is a legacy key, ignored unless `max_scrollback_size` is `0`: the scrollback buffer is `sessions.max_scrollback_size` bytes (default 10 MB) — older sample configs that set only `history_size` keep the 10 MB default.
 
 The daemon reads the file at startup; restart it after editing (`hqssh service restart`).
 

@@ -13,26 +13,35 @@ import (
 	"github.com/gelotto/hqsshd/internal/logging"
 )
 
-// history_size (the only scrollback knob documented in README) must size
-// the buffer; DefaultConfig's max_scrollback_size=10MB silently wins.
-func TestHistorySizeDerivesBufferWhenMaxScrollbackAbsent(t *testing.T) {
-	dir := t.TempDir()
-	cfgPath := filepath.Join(dir, "daemon.yaml")
-	if err := os.WriteFile(cfgPath, []byte("sessions:\n  history_size: 10\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := config.LoadFromPath(cfgPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	m := NewManager(cfg.Sessions.IdleTimeout, cfg.Sessions.MaxSessions, cfg.Sessions.HistorySize,
-		dir, "", 0, cfg.Sessions.ClientBufferSize, cfg.Sessions.MaxScrollbackSize)
-	defer m.Close()
-
-	want := cfg.Sessions.HistorySize * 100 // the "lines × ~100 bytes" estimate NewManager documents
-	if m.maxBufferSize != want {
-		t.Errorf("history_size: 10 in daemon.yaml -> maxBufferSize = %d, want %d (history_size is ignored; max_scrollback_size default %d wins)",
-			m.maxBufferSize, want, cfg.Sessions.MaxScrollbackSize)
+// history_size is legacy: daemon.yaml files written from the old README
+// sample (history_size: 10000) must keep the 10 MB default scrollback, not
+// shrink to history_size × ~100 bytes. Only an explicit
+// max_scrollback_size changes the buffer.
+func TestHistorySizeDoesNotShrinkDefaultScrollback(t *testing.T) {
+	for _, tc := range []struct {
+		name, yaml string
+		want       int
+	}{
+		{"legacy history_size only", "sessions:\n  history_size: 10000\n", 10 * 1024 * 1024},
+		{"explicit max_scrollback_size", "sessions:\n  history_size: 10000\n  max_scrollback_size: 2097152\n", 2 * 1024 * 1024},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			cfgPath := filepath.Join(dir, "daemon.yaml")
+			if err := os.WriteFile(cfgPath, []byte(tc.yaml), 0600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := config.LoadFromPath(cfgPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := NewManager(cfg.Sessions.IdleTimeout, cfg.Sessions.MaxSessions, cfg.Sessions.HistorySize,
+				dir, "", 0, cfg.Sessions.ClientBufferSize, cfg.Sessions.MaxScrollbackSize)
+			defer m.Close()
+			if m.maxBufferSize != tc.want {
+				t.Errorf("maxBufferSize = %d, want %d", m.maxBufferSize, tc.want)
+			}
+		})
 	}
 }
 
