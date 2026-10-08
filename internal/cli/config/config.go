@@ -192,6 +192,14 @@ func Resolve(cliHost, cliUser, cliKey, cliPassword string, cliPort, cliDaemonPor
 			}
 		} else {
 			r.Host = cliHost
+			// A raw hostname is not the default host either: its
+			// daemon_port belongs to another machine.
+			if cliDaemonPort == 0 {
+				r.DaemonPort = DefaultDaemonPort
+				if envDaemonPort != 0 {
+					r.DaemonPort = envDaemonPort
+				}
+			}
 		}
 	}
 	if cliUser != "" {

@@ -44,7 +44,18 @@ hosts:
 		t.Errorf("host without daemon_port: got %d, want default %d", r.DaemonPort, DefaultDaemonPort)
 	}
 
+	// A raw -H host that is not an alias must not inherit the default
+	// host's daemon_port
+	r = Resolve("other.example.com", "", "", "", 0, 0)
+	if r.Host != "other.example.com" || r.DaemonPort != DefaultDaemonPort {
+		t.Errorf("raw host: got %s:%d, want default daemon port %d", r.Host, r.DaemonPort, DefaultDaemonPort)
+	}
+
 	t.Setenv("HQSSH_DAEMON_PORT", "50060")
+	r = Resolve("other.example.com", "", "", "", 0, 0)
+	if r.DaemonPort != 50060 {
+		t.Errorf("raw host should use HQSSH_DAEMON_PORT: %d", r.DaemonPort)
+	}
 	r = Resolve("", "", "", "", 0, 0)
 	if r.DaemonPort != 50060 {
 		t.Errorf("env should override the config file: %d", r.DaemonPort)
