@@ -162,7 +162,8 @@ func (s *Server) Detector() *tools.Detector {
 	return s.detector
 }
 
-// resolveUnderHome resolves a non-absolute working directory against home:
+// resolveUnderHome resolves a non-absolute path (session working directory
+// or project path) against home:
 // "" and "~" are home itself, "~/x" and "x" are home/x.
 func resolveUnderHome(dir, home string) string {
 	if dir == "~" {
@@ -354,10 +355,19 @@ func (s *projectService) Add(ctx context.Context, req *pb.AddProjectRequest) (*p
 	if path == "" {
 		return nil, status.Error(codes.InvalidArgument, "path is required")
 	}
-	// A relative path would be resolved against the daemon's working
-	// directory, which means nothing to a remote client.
-	if !filepath.IsAbs(path) && path != "~" && !strings.HasPrefix(path, "~/") {
-		return nil, status.Errorf(codes.InvalidArgument, "path must be absolute (or start with ~/): %q", path)
+	// "~user" would need another user's home: refuse rather than guess.
+	if strings.HasPrefix(path, "~") && path != "~" && !strings.HasPrefix(path, "~/") {
+		return nil, status.Errorf(codes.InvalidArgument, "path must be absolute, relative to your home, or start with ~/: %q", path)
+	}
+	// Relative paths (the app's ADD PROJECT field is free text) mean the
+	// remote user's home, like session working directories — never the
+	// daemon's own cwd, which depends on how the service was started.
+	if !filepath.IsAbs(path) {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "failed to get home directory: %v", err)
+		}
+		path = resolveUnderHome(path, homeDir)
 	}
 
 	proj, err := s.server.discovery.CreateFromPath(path, req.GetName())

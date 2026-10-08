@@ -205,9 +205,9 @@ func TestTaskUpdateMergesByPresence(t *testing.T) {
 	}
 }
 
-// ProjectService.Add normalises paths: a relative path is refused (it would
-// resolve against the daemon's cwd), and trailing slashes do not produce a
-// second project ID for the same directory.
+// ProjectService.Add normalises paths: a relative path resolves under the
+// user's home (never the daemon's cwd), "~user" is refused, and trailing
+// slashes do not produce a second project ID for the same directory.
 func TestProjectAddPathNormalisation(t *testing.T) {
 	srv, _ := startAuthServer(t, "", false)
 	ps := &projectService{server: srv}
@@ -218,15 +218,27 @@ func TestProjectAddPathNormalisation(t *testing.T) {
 	if err := os.Mkdir(sub, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Chdir(dir)
+	t.Setenv("HOME", dir)
+	t.Chdir(t.TempDir()) // the daemon's cwd must not matter
 
-	if _, err := ps.Add(ctx, &pb.AddProjectRequest{Path: "repo"}); status.Code(err) != codes.InvalidArgument {
-		t.Errorf("Add(\"repo\") relative path: got %v, want InvalidArgument", err)
-	}
-
-	a, err := ps.Add(ctx, &pb.AddProjectRequest{Path: sub})
+	a, err := ps.Add(ctx, &pb.AddProjectRequest{Path: "repo"})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Add(\"repo\") relative path: %v", err)
+	}
+	if want, _ := filepath.EvalSymlinks(sub); a.GetPath() != sub && a.GetPath() != want {
+		t.Errorf("Add(\"repo\") path = %q, want %q (under HOME)", a.GetPath(), sub)
+	}
+	for _, p := range []string{"~/repo", "./repo", sub} {
+		got, err := ps.Add(ctx, &pb.AddProjectRequest{Path: p})
+		if err != nil {
+			t.Fatalf("Add(%q): %v", p, err)
+		}
+		if got.GetId() != a.GetId() {
+			t.Errorf("Add(%q) id = %s, want %s (same directory)", p, got.GetId(), a.GetId())
+		}
+	}
+	if _, err := ps.Add(ctx, &pb.AddProjectRequest{Path: "~root/repo"}); status.Code(err) != codes.InvalidArgument {
+		t.Errorf("Add(\"~root/repo\"): got %v, want InvalidArgument", err)
 	}
 	b, err := ps.Add(ctx, &pb.AddProjectRequest{Path: sub + "/"})
 	if err != nil {
