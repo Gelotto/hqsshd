@@ -140,6 +140,7 @@ func Resolve(cliHost, cliUser, cliKey, cliPassword string, cliPort, cliDaemonPor
 	if env := os.Getenv("HQSSH_HOST"); env != "" {
 		if env != r.Host {
 			r.AuthToken = "" // the default host's token is not for this host
+			r.Password = ""  // nor its password
 		}
 		r.Host = env
 	}
@@ -185,9 +186,8 @@ func Resolve(cliHost, cliUser, cliKey, cliPassword string, cliPort, cliDaemonPor
 			if cliKey == "" && hostCfg.Key != "" {
 				r.Key = expandPath(hostCfg.Key)
 			}
-			if cliPassword == "" && hostCfg.Password != "" {
-				r.Password = hostCfg.Password
-			}
+			// A password only travels with its own host: the alias's, or none.
+			r.Password = hostCfg.Password
 			// Never send another host's token: the alias's own, else the
 			// environment's, else none.
 			r.AuthToken = hostCfg.AuthToken
@@ -209,8 +209,9 @@ func Resolve(cliHost, cliUser, cliKey, cliPassword string, cliPort, cliDaemonPor
 		} else {
 			r.Host = cliHost
 			// A raw hostname is not the default host either: its
-			// daemon_port and auth_token belong to another machine.
+			// daemon_port, auth_token and password belong to another machine.
 			r.AuthToken = envAuthToken
+			r.Password = ""
 			if cliDaemonPort == 0 {
 				r.DaemonPort = DefaultDaemonPort
 				if envDaemonPort != 0 {

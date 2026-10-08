@@ -121,3 +121,41 @@ hosts:
 		}
 	}
 }
+
+func TestResolvePasswordStaysWithItsHost(t *testing.T) {
+	writeConfig(t, `
+default_host: box
+hosts:
+  box:
+    host: box.example.com
+    password: box-pass
+  other:
+    host: other.example.com
+    password: other-pass
+  plain:
+    host: plain.example.com
+`)
+	t.Setenv("HQSSH_HOST", "")
+
+	for _, tc := range []struct {
+		cliHost, want string
+	}{
+		{"", "box-pass"},
+		{"box", "box-pass"},
+		{"other", "other-pass"},
+		{"plain", ""},           // alias without a password
+		{"raw.example.com", ""}, // not an alias: never the default host's password
+	} {
+		if got := Resolve(tc.cliHost, "", "", "", 0, 0).Password; got != tc.want {
+			t.Errorf("Resolve(%q).Password = %q, want %q", tc.cliHost, got, tc.want)
+		}
+	}
+	if got := Resolve("raw.example.com", "", "", "flag-pass", 0, 0).Password; got != "flag-pass" {
+		t.Errorf("--password was not used for a raw host, got %q", got)
+	}
+
+	t.Setenv("HQSSH_HOST", "env.example.com")
+	if got := Resolve("", "", "", "", 0, 0).Password; got != "" {
+		t.Errorf("HQSSH_HOST pointing elsewhere kept the default host's password %q", got)
+	}
+}
