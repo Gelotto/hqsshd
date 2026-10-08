@@ -15,12 +15,18 @@
 package notify
 
 import (
+	"bytes"
 	"io"
+	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/gelotto/hqsshd/internal/logging"
 	"github.com/gelotto/hqsshd/internal/session"
 )
 
@@ -152,4 +158,72 @@ func TestWebhookNotifierStop(t *testing.T) {
 	case <-time.After(300 * time.Millisecond):
 		// Expected: nothing delivered
 	}
+}
+
+// The webhook URL is a credential (an ntfy topic is readable and writable
+// by anyone who knows it): logs carry only scheme and host, including the
+// transport error, whose *url.Error repeats the full URL.
+func TestWebhookNotifierDoesNotLogURL(t *testing.T) {
+	var buf syncBuffer
+	old := logging.Logger
+	logging.Logger = slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	t.Cleanup(func() { logging.Logger = old })
+
+	const secret = "hqssh-topic-s3cret"
+	rejected := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		rejected <- struct{}{}
+	}))
+	defer server.Close()
+
+	// a closed port for the delivery-failure path
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadAddr := lis.Addr().String()
+	lis.Close()
+
+	for _, target := range []string{
+		server.URL + "/" + secret + "?auth=" + secret,
+		"http://" + deadAddr + "/" + secret,
+	} {
+		w := NewWebhookNotifier(target)
+		w.send(session.Event{SessionID: "s", Tool: "claude", Type: session.EventTypeBell})
+	}
+	select {
+	case <-rejected:
+	case <-time.After(5 * time.Second):
+		t.Fatal("webhook server not reached")
+	}
+
+	logs := buf.String()
+	if strings.Contains(logs, secret) {
+		t.Errorf("webhook URL path/query leaked into logs:\n%s", logs)
+	}
+	if !strings.Contains(logs, "webhook delivery rejected") || !strings.Contains(logs, "webhook delivery failed") {
+		t.Errorf("expected rejected and failed log lines:\n%s", logs)
+	}
+	if !strings.Contains(logs, "url=http://127.0.0.1:") {
+		t.Errorf("expected scheme+host in logs:\n%s", logs)
+	}
+}
+
+// syncBuffer is a bytes.Buffer safe for concurrent log writes.
+type syncBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
 }

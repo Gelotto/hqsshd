@@ -16,9 +16,13 @@
 package notify
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gelotto/hqsshd/internal/logging"
@@ -35,14 +39,32 @@ type WebhookNotifier struct {
 	url    string
 	client *http.Client
 	done   chan struct{}
+	wg     sync.WaitGroup // the delivery goroutine
+
+	ctx    context.Context // cancelled by Stop: aborts an in-flight POST
+	cancel context.CancelFunc
+}
+
+// redactURL returns only the scheme and host of a webhook URL for logs.
+// The path is the credential for ntfy (anyone who knows the topic can read
+// and post to it), and the query or userinfo may carry tokens.
+func redactURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return "(unparseable URL)"
+	}
+	return u.Scheme + "://" + u.Host
 }
 
 // NewWebhookNotifier creates a notifier targeting url.
 func NewWebhookNotifier(url string) *WebhookNotifier {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &WebhookNotifier{
 		url:    url,
 		client: &http.Client{Timeout: 10 * time.Second},
 		done:   make(chan struct{}),
+		ctx:    ctx,
+		cancel: cancel,
 	}
 }
 
@@ -50,9 +72,11 @@ func NewWebhookNotifier(url string) *WebhookNotifier {
 func (w *WebhookNotifier) Start(hub *session.EventHub) {
 	id, ch := hub.Subscribe()
 
+	w.wg.Add(1)
 	go func() {
+		defer w.wg.Done()
 		defer hub.Unsubscribe(id)
-		logging.Info("webhook notifier started", "url", w.url)
+		logging.Info("webhook notifier started", "url", redactURL(w.url))
 
 		for {
 			select {
@@ -68,9 +92,12 @@ func (w *WebhookNotifier) Start(hub *session.EventHub) {
 	}()
 }
 
-// Stop terminates event delivery.
+// Stop terminates event delivery, aborting an in-flight POST, and waits
+// for the delivery goroutine to exit.
 func (w *WebhookNotifier) Stop() {
 	close(w.done)
+	w.cancel()
+	w.wg.Wait()
 }
 
 // send POSTs a single event; failures are logged, never retried — events
@@ -104,9 +131,9 @@ func (w *WebhookNotifier) send(event session.Event) {
 		return
 	}
 
-	req, err := http.NewRequest(http.MethodPost, w.url, strings.NewReader(body))
+	req, err := http.NewRequestWithContext(w.ctx, http.MethodPost, w.url, strings.NewReader(body))
 	if err != nil {
-		logging.Warn("webhook request build failed", "error", err)
+		logging.Warn("webhook request build failed", "url", redactURL(w.url))
 		return
 	}
 	// ntfy-compatible notification headers
@@ -120,7 +147,12 @@ func (w *WebhookNotifier) send(event session.Event) {
 
 	resp, err := w.client.Do(req)
 	if err != nil {
-		logging.Warn("webhook delivery failed", "error", err)
+		// *url.Error repeats the full URL; log only the cause
+		var uerr *url.Error
+		if errors.As(err, &uerr) {
+			err = uerr.Err
+		}
+		logging.Warn("webhook delivery failed", "url", redactURL(w.url), "error", err)
 		return
 	}
 	resp.Body.Close()
@@ -128,7 +160,7 @@ func (w *WebhookNotifier) send(event session.Event) {
 	if resp.StatusCode >= 300 {
 		logging.Warn("webhook delivery rejected",
 			"status", resp.StatusCode,
-			"url", w.url,
+			"url", redactURL(w.url),
 		)
 	} else {
 		logging.Debug("webhook delivered",
