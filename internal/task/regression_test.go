@@ -10,6 +10,19 @@ import (
 	"time"
 )
 
+// processStarted reports whether executeTask has started the run's process.
+func processStarted(e *Executor, runID string) bool {
+	e.runningMu.RLock()
+	rt := e.running[runID]
+	e.runningMu.RUnlock()
+	if rt == nil {
+		return false
+	}
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	return rt.pgid > 0
+}
+
 func waitRun(t *testing.T, rs *RunStore, id string, timeout time.Duration) *Run {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -122,23 +135,21 @@ func TestCancelKeepsCancelledStatus(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		// wait until the process is registered as running
-		deadline := time.Now().Add(3 * time.Second)
-		for time.Now().Before(deadline) && e.GetRunningCount() == 0 {
+		// wait until the process has started (pgid published)
+		deadline := time.Now().Add(8 * time.Second)
+		for time.Now().Before(deadline) && !processStarted(e, run.ID) {
 			time.Sleep(10 * time.Millisecond)
 		}
 		if err := e.Cancel(run.ID); err != nil {
 			t.Fatalf("Cancel: %v", err)
 		}
-		final := waitRun(t, rs, run.ID, 5*time.Second)
+		// executeTask's final Save must finish before the next iteration
+		// (and before TempDir cleanup): wait for the goroutine itself.
+		e.wg.Wait()
+		final := rs.Get(run.ID)
 		if final.Status != RunStatusCancelled {
 			failed++
 			t.Logf("iteration %d: status=%v err=%q", i, final.Status, final.Error)
-		}
-		// let executeTask finish before the next iteration
-		deadline = time.Now().Add(3 * time.Second)
-		for time.Now().Before(deadline) && e.GetRunningCount() != 0 {
-			time.Sleep(10 * time.Millisecond)
 		}
 	}
 	if failed > 0 {
