@@ -279,8 +279,11 @@ func (e *Executor) executeTask(parent context.Context, rt *runningTask, task *Ta
 	// prompt-framework output into the run. Give it the interactive login
 	// shell's PATH instead, so tools set up in ~/.zshrc or ~/.bashrc (nvm,
 	// bun, volta, claude's installer) resolve like they do in sessions.
+	// The daemon's own entries are kept after it: init that sets PATH
+	// outright (Debian's /etc/profile) would otherwise drop directories
+	// EnsureUserPATH or the service unit added.
 	if path, ok := e.pathProbe(ctx); ok {
-		cmd.Env = append(cmd.Env, "PATH="+path)
+		cmd.Env = append(cmd.Env, "PATH="+shellutil.MergePATH(path, os.Getenv("PATH")))
 	}
 	if ctx.Err() != nil {
 		// Cancelled (or timed out) during the probe: never start it

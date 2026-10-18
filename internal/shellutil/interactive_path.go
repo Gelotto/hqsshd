@@ -17,7 +17,9 @@ package shellutil
 import (
 	"bytes"
 	"context"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -69,6 +71,23 @@ func InteractivePATHContext(parent context.Context, timeout time.Duration) (path
 		return "", false
 	}
 	return parseInteractivePATH(stdout.String())
+}
+
+// MergePATH returns primary followed by the entries of secondary that
+// primary lacks, in order. Empty entries are dropped from both.
+func MergePATH(primary, secondary string) string {
+	seen := make(map[string]bool)
+	var merged []string
+	for _, list := range []string{primary, secondary} {
+		for _, dir := range filepath.SplitList(list) {
+			if dir == "" || seen[dir] {
+				continue
+			}
+			seen[dir] = true
+			merged = append(merged, dir)
+		}
+	}
+	return strings.Join(merged, string(os.PathListSeparator))
 }
 
 // parseInteractivePATH returns the value of the last marker line.

@@ -42,6 +42,23 @@ func TestParseInteractivePATH(t *testing.T) {
 	}
 }
 
+func TestMergePATH(t *testing.T) {
+	cases := []struct {
+		primary, secondary, want string
+	}{
+		{"/a:/b", "/c", "/a:/b:/c"},
+		{"/usr/bin:/bin", "/home/u/.local/bin:/usr/bin:/bin", "/usr/bin:/bin:/home/u/.local/bin"},
+		{"/a::/a", ":/b:", "/a:/b"},
+		{"", "/a", "/a"},
+		{"/a", "", "/a"},
+	}
+	for _, tc := range cases {
+		if got := MergePATH(tc.primary, tc.secondary); got != tc.want {
+			t.Errorf("MergePATH(%q, %q) = %q; want %q", tc.primary, tc.secondary, got, tc.want)
+		}
+	}
+}
+
 // PATH entries added only by interactive init (~/.zshrc; ~/.bashrc behind the
 // stock non-interactive guard) must be returned, and init that prints or
 // prompts for input must neither leak into the result nor block.
