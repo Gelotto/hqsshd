@@ -286,6 +286,7 @@ func TestManager_CountExcludesEnded(t *testing.T) {
 // one). The shell traps WINCH and prints a marker; quote-splitting in the
 // typed command keeps the PTY input echo from matching the marker.
 func TestManager_AttachTriggersRepaintSignal(t *testing.T) {
+	t.Setenv("SHELL", "/bin/sh")
 	m := NewManager(3600, 20, 10000, t.TempDir(), "", 0, 64, 0)
 	defer m.Close()
 
@@ -321,7 +322,10 @@ func TestManager_AttachTriggersRepaintSignal(t *testing.T) {
 		}
 	}
 
-	if _, err := sess.Write([]byte("trap 'echo RE''PAINT-MARK' WINCH; echo TRAP''-READY\n")); err != nil {
+	// The sleep loop keeps a command running: dash (/bin/sh on
+	// Debian/Ubuntu) defers traps while idle at its prompt, so the WINCH
+	// trap only fires between commands.
+	if _, err := sess.Write([]byte("trap 'echo RE''PAINT-MARK' WINCH; echo TRAP''-READY; while :; do sleep 0.1; done\n")); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
 	// TRAP-READY only appears unsplit once the line has executed, which
