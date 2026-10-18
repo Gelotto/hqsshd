@@ -165,9 +165,8 @@ func TestWebhookNotifierStop(t *testing.T) {
 // transport error, whose *url.Error repeats the full URL.
 func TestWebhookNotifierDoesNotLogURL(t *testing.T) {
 	var buf syncBuffer
-	old := logging.Logger
-	logging.Logger = slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	t.Cleanup(func() { logging.Logger = old })
+	old := logging.SetLogger(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { logging.SetLogger(old) })
 
 	const secret = "hqssh-topic-s3cret"
 	rejected := make(chan struct{}, 1)

@@ -185,10 +185,10 @@ func main() {
 // logger is not up or writes to a file, so it is visible both in
 // ~/.hqssh/logs/hqsshd.log (launchd), journald (systemd) and a terminal.
 func fatal(code int, msg string, err error) {
-	if logging.Logger != nil {
+	if logging.Get() != nil {
 		logging.Error(msg, "error", err, "exit_code", code)
 	}
-	if logging.Logger == nil || logging.ToFile() {
+	if logging.Get() == nil || logging.ToFile() {
 		fmt.Fprintf(os.Stderr, "hqsshd: %s: %v\n", msg, err)
 	}
 	logging.Close()

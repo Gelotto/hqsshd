@@ -29,10 +29,10 @@ import (
 )
 
 const (
-	logBufferSize  = 4 * 1024        // 4KB buffer before flush
-	flushInterval  = 100 * time.Millisecond
-	logFileMode    = 0600 // Owner read/write only
-	logDirMode     = 0700 // Owner full access only
+	logBufferSize = 4 * 1024 // 4KB buffer before flush
+	flushInterval = 100 * time.Millisecond
+	logFileMode   = 0600 // Owner read/write only
+	logDirMode    = 0700 // Owner full access only
 )
 
 // SessionLogger handles persistent logging of session output to disk.
@@ -203,8 +203,11 @@ func (l *SessionLogger) BytesWritten() int64 {
 	return l.bytesWritten
 }
 
-// startFlushTimer starts the periodic flush timer
+// startFlushTimer starts the periodic flush timer. The field is set under
+// the lock periodicFlush takes, which may run before AfterFunc returns.
 func (l *SessionLogger) startFlushTimer() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	l.flushTimer = time.AfterFunc(flushInterval, func() {
 		l.periodicFlush()
 	})

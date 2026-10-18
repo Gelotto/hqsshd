@@ -22,11 +22,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 )
 
 var (
-	// Logger is the global structured logger.
-	Logger *slog.Logger
+	// logger is the global structured logger; atomic so tests can swap it
+	// (SetLogger) while session goroutines are logging.
+	logger atomic.Pointer[slog.Logger]
 
 	// logFile is the open log file (if any) for cleanup.
 	logFile *os.File
@@ -81,9 +83,20 @@ func Init(cfg *Config) error {
 		handler = slog.NewTextHandler(output, opts)
 	}
 
-	Logger = slog.New(handler)
-	slog.SetDefault(Logger)
+	l := slog.New(handler)
+	logger.Store(l)
+	slog.SetDefault(l)
 	return nil
+}
+
+// Get returns the global logger, or nil before Init.
+func Get() *slog.Logger {
+	return logger.Load()
+}
+
+// SetLogger replaces the global logger and returns the previous one.
+func SetLogger(l *slog.Logger) *slog.Logger {
+	return logger.Swap(l)
 }
 
 // Close closes the log file if one was opened.
@@ -118,36 +131,36 @@ func parseLevel(level string) slog.Level {
 
 // Debug logs a debug message with optional key-value pairs.
 func Debug(msg string, args ...any) {
-	if Logger != nil {
-		Logger.Debug(msg, args...)
+	if l := logger.Load(); l != nil {
+		l.Debug(msg, args...)
 	}
 }
 
 // Info logs an info message with optional key-value pairs.
 func Info(msg string, args ...any) {
-	if Logger != nil {
-		Logger.Info(msg, args...)
+	if l := logger.Load(); l != nil {
+		l.Info(msg, args...)
 	}
 }
 
 // Warn logs a warning message with optional key-value pairs.
 func Warn(msg string, args ...any) {
-	if Logger != nil {
-		Logger.Warn(msg, args...)
+	if l := logger.Load(); l != nil {
+		l.Warn(msg, args...)
 	}
 }
 
 // Error logs an error message with optional key-value pairs.
 func Error(msg string, args ...any) {
-	if Logger != nil {
-		Logger.Error(msg, args...)
+	if l := logger.Load(); l != nil {
+		l.Error(msg, args...)
 	}
 }
 
 // With returns a logger with the given attributes added.
 func With(args ...any) *slog.Logger {
-	if Logger != nil {
-		return Logger.With(args...)
+	if l := logger.Load(); l != nil {
+		return l.With(args...)
 	}
 	return slog.Default().With(args...)
 }

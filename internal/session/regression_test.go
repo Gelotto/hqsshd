@@ -176,9 +176,8 @@ func TestCloseAfterNaturalExitIsQuiet(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	var buf bytes.Buffer
-	old := logging.Logger
-	logging.Logger = slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	t.Cleanup(func() { logging.Logger = old })
+	old := logging.SetLogger(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { logging.SetLogger(old) })
 
 	sess := NewSession("", "shell", "/tmp", "", []string{"true"}, 80, 24, 0)
 	if err := sess.StartPTY(); err != nil {
