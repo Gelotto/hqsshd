@@ -118,6 +118,7 @@ func TestAttachEmitsGapMarkerThenRepaints(t *testing.T) {
 
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("SHELL", "/bin/sh") // see newTestServer
 	cfg := config.DefaultConfig()
 	cfg.Tools = nil
 	cfg.Socket = shortSocketPath(t)
@@ -158,9 +159,12 @@ func TestAttachEmitsGapMarkerThenRepaints(t *testing.T) {
 	stream.mu.Unlock()
 
 	// Stall the link, flood the PTY well past the two-chunk queue, and keep
-	// the link stalled long enough for the bounded waits to give up.
+	// the link stalled long enough for the bounded waits to give up. The
+	// sleep loop keeps a command running: dash (/bin/sh on Debian/Ubuntu)
+	// defers traps while idle at its prompt, so the WINCH trap only fires
+	// between commands.
 	stream.setOpen(false)
-	if _, err := sess.Write([]byte("yes FLOOD | head -c 200000; echo FL''OOD-DONE\n")); err != nil {
+	if _, err := sess.Write([]byte("yes FLOOD | head -c 200000; echo FL''OOD-DONE; while :; do sleep 0.1; done\n")); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
 	time.Sleep(2500 * time.Millisecond)

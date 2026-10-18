@@ -63,10 +63,13 @@ func freePort(t *testing.T) int {
 
 // newTestServer builds a server whose data dir is a temp HOME and whose
 // socket is short enough for macOS. TCP is disabled unless the test
-// enables it.
+// enables it. Sessions run /bin/sh, not the developer's $SHELL: with HOME
+// pointing at an empty dir, zsh starts its interactive new-user setup and
+// never reaches the commands the tests type.
 func newTestServer(t *testing.T, home string) (*Server, *config.Config) {
 	t.Helper()
 	t.Setenv("HOME", home)
+	t.Setenv("SHELL", "/bin/sh")
 	cfg := config.DefaultConfig()
 	cfg.Tools = nil
 	cfg.Socket = shortSocketPath(t)
